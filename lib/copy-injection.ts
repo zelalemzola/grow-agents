@@ -20,6 +20,8 @@ export const sectionPlanSchema = z.object({
       content: z.string(),
       ctaLabel: z.string().nullable(),
       imagePrompt: z.string().nullable(),
+      /** When true, per image guideline: use GIF/animation (process, mechanism, transformation). Required for strict response_format. */
+      preferGif: z.boolean(),
     }),
   ),
   styleNotes: z.array(z.string()),
@@ -37,21 +39,26 @@ export const editPlanSchema = z.object({
     z.object({
       sectionId: z.string(),
       prompt: z.string(),
+      /** When true, per image guideline: use GIF/animation. Required for strict response_format. */
+      preferGif: z.boolean(),
     }),
   ),
 });
 
+// All fields must be in schema for strict response_format APIs (e.g. OpenAI).
+// selectorHint and rationale are optional in practice—use null when not needed.
 const targetedCodeEditSchema = z.object({
-  selectorHint: z.string().nullable().optional(),
   find: z.string().min(1),
   replace: z.string(),
-  rationale: z.string().nullable().optional(),
+  selectorHint: z.string().nullable(),
+  rationale: z.string().nullable(),
 });
 
+// notes is required by schema but can be null for strict response_format APIs
 export const targetedEditSchema = z.object({
   htmlEdits: z.array(targetedCodeEditSchema).default([]),
   cssEdits: z.array(targetedCodeEditSchema).default([]),
-  notes: z.string().nullable().optional(),
+  notes: z.string().nullable(),
 });
 
 export function renderPreviewDocument(html: string, css: string): string {

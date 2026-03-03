@@ -1,8 +1,8 @@
-import { generateImage, generateObject } from "ai";
+import { generateObject } from "ai";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { buildImageModelPrompt } from "@/lib/image-prompt-builder";
+import { IMAGE_GENERATION_GUIDELINE } from "@/lib/image-generation-guideline";
 import {
   agent1PromptContext,
   FUNNEL_GENERATION_EXTRA_SYSTEM_PROMPT,
@@ -14,6 +14,9 @@ import { createServerSupabaseClient } from "@/utils/supabase/server";
 const editSchema = z.object({
   funnelId: z.string().uuid(),
   editComment: z.string().min(4),
+  /** Optional: use latest draft from client instead of DB (ensures edits apply to unsaved changes). */
+  currentHtml: z.string().optional(),
+  currentCss: z.string().optional(),
 });
 
 type TargetedCodeEdit = z.infer<typeof targetedEditSchema>["htmlEdits"][number];
@@ -35,8 +38,16 @@ function countOccurrences(source: string, needle: string): number {
   return count;
 }
 
-function applyTargetedEdits(source: string, edits: TargetedCodeEdit[], label: "HTML" | "CSS"): string {
+type ApplyEditsResult = { result: string; firstEditRegion: { startIndex: number; endIndex: number } | null };
+
+function applyTargetedEdits(
+  source: string,
+  edits: TargetedCodeEdit[],
+  label: "HTML" | "CSS",
+): ApplyEditsResult {
   let next = source;
+  let firstEditRegion: { startIndex: number; endIndex: number } | null = null;
+
   for (const edit of edits) {
     if (edit.find === edit.replace) {
       continue;
@@ -61,9 +72,13 @@ function applyTargetedEdits(source: string, edits: TargetedCodeEdit[], label: "H
       );
     }
 
+    const startIndex = next.indexOf(edit.find);
     next = next.replace(edit.find, edit.replace);
+    if (firstEditRegion === null) {
+      firstEditRegion = { startIndex, endIndex: startIndex + edit.replace.length };
+    }
   }
-  return next;
+  return { result: next, firstEditRegion };
 }
 
 export async function POST(request: Request) {
@@ -92,6 +107,16 @@ export async function POST(request: Request) {
       );
     }
 
+    // Use client's current draft when provided (so edits apply to unsaved changes)
+    const workingHtml =
+      parsed.data.currentHtml != null && parsed.data.currentHtml.trim().length > 0
+        ? parsed.data.currentHtml
+        : (funnel.latest_html as string);
+    const workingCss =
+      parsed.data.currentCss != null && parsed.data.currentCss.trim().length > 0
+        ? parsed.data.currentCss
+        : (funnel.latest_css as string);
+
     // Knowledge base disabled for now to reduce latency
     const copyContext = agent1PromptContext([], "copy");
 
@@ -100,14 +125,23 @@ export async function POST(request: Request) {
     const editPlanResult = await generateObject({
       model: gateway("openai/gpt-4.1-mini"),
       schema: editPlanSchema,
-      system: FUNNEL_GENERATION_EXTRA_SYSTEM_PROMPT,
+      system: `${FUNNEL_GENERATION_EXTRA_SYSTEM_PROMPT}
+
+${IMAGE_GENERATION_GUIDELINE}`,
       prompt: `${copyContext}
 
 You are a funnel optimization editor.
 
 Analyze the user's edit request and decide:
-1) what textual/layout update is needed
-2) whether any existing section images must be regenerated
+1) what textual/layout update is needed (if any)
+2) whether any existing section images must be regenerated (if any)
+
+CRITICAL - IMAGE-ONLY REQUESTS:
+- If the user ONLY mentions images (e.g. "the image under...", "make the hero image...", "the picture looks...", "change the image to seem..."), then you MUST return ONLY imageEdits.
+- Do NOT suggest HTML or CSS changes when the user is talking about images alone.
+- Map the user's image feedback to the correct sectionId (e.g. hero, headline, first body section) and write a new image prompt.
+
+IMAGE PROMPTS MUST follow the advertorial guideline: editorial, candid, no text/logos, related to the section content and funnel objective.
 
 Current funnel objective:
 ${funnel.objective}
@@ -115,9 +149,11 @@ ${funnel.objective}
 User edit request:
 ${parsed.data.editComment}
 
-Return concise summary and imageEdits (sectionId + prompt). If no image changes are needed, return empty imageEdits.
+Return concise summary and imageEdits (sectionId + prompt + preferGif). If no image changes are needed, return empty imageEdits.
 
-For each imageEdit prompt: write a 1-2 sentence description of what the new photograph should show (people, setting, objects, mood). Describe the visual scene only - no instructions or meta-commentary.`,
+For each imageEdit:
+- prompt: 1-2 sentence description of what the new photograph should show (people, setting, objects, mood). Describe the visual scene only - specific to the funnel content. No instructions or meta-commentary.
+- preferGif: set true when the guideline requires animation (headline implying process/transformation, body explaining mechanism/digestion/absorption, product mechanism). Otherwise false.`,
     });
 
     const editPlan = editPlanResult.object;
@@ -128,19 +164,19 @@ For each imageEdit prompt: write a 1-2 sentence description of what the new phot
       system: FUNNEL_GENERATION_EXTRA_SYSTEM_PROMPT,
       prompt: `${copyContext}
 
-You are editing an existing funnel page.
+You are a funnel code editor that makes TARGETED, MINIMAL edits — like a coding assistant.
 
-Critical requirements:
-- Apply the user's request precisely.
-- Return only targeted edits in find/replace form.
-- Do NOT rewrite full HTML or full CSS.
-- Only map and modify the exact parts related to the user's comment.
-- Preserve all unrelated layout structure, copy blocks, and existing CSS selectors.
-- Keep valid HTML and CSS.
-- Keep all image placeholders in same format: <img src="{{image:SECTION_ID}}" ...>.
-- Every "find" must be an exact snippet copied from the current code.
-- Every "find" must match exactly one location.
-- If no HTML or CSS changes are required, return empty arrays.
+EDITING STRATEGY (CRITICAL):
+1. Parse the user's request and identify the EXACT section(s) they want changed (e.g. hero headline, body paragraph 2, CTA button).
+2. Route through the HTML/CSS to find that specific section. Look for section IDs, class names, or distinctive text.
+3. Output ONLY find/replace pairs. Each "find" MUST be an EXACT character-for-character copy of a snippet from the current code.
+4. Each "find" must be as MINIMAL as possible — the smallest unique substring that contains only what needs to change.
+5. NEVER return full section rewrites. NEVER replace more than ~30% of the file.
+6. If the user wants to change one headline, your "find" should be just that headline text (or the enclosing tag), not the whole section.
+7. Preserve all unrelated structure, image placeholders {{image:SECTION_ID}}, and styling.
+8. If no HTML or CSS changes are required, return empty arrays.
+
+IMAGE-ONLY REQUESTS: If the user's request is ONLY about images (e.g. "the image under X looks...", "make the hero image seem..."), you MUST return empty htmlEdits and empty cssEdits. Do not touch HTML or CSS. Only image regeneration will be applied separately.
 
 User request:
 ${parsed.data.editComment}
@@ -148,40 +184,53 @@ ${parsed.data.editComment}
 Edit summary:
 ${editPlan.summary}
 
-Current HTML:
-${funnel.latest_html}
+Current HTML (edit only the relevant part; copy "find" exactly from here):
+${workingHtml}
 
-Current CSS:
-${funnel.latest_css}`,
+Current CSS (edit only the relevant part; copy "find" exactly from here):
+${workingCss}`,
     });
 
     const targetedEdits = targetedEditsResult.object;
-    const updatedHtml = applyTargetedEdits(
-      funnel.latest_html as string,
+    const htmlResult = applyTargetedEdits(
+      workingHtml,
       targetedEdits.htmlEdits,
       "HTML",
     );
-    const updatedCss = applyTargetedEdits(
-      funnel.latest_css as string,
+    const cssResult = applyTargetedEdits(
+      workingCss,
       targetedEdits.cssEdits,
       "CSS",
     );
+    const updatedHtml = htmlResult.result;
+    const updatedCss = cssResult.result;
+
+    /** Regions for Cursor-like scroll-to-highlight in the editor. */
+    const editedRegions: Array<{
+      type: "html" | "css";
+      startIndex: number;
+      endIndex: number;
+    }> = [];
+    if (htmlResult.firstEditRegion) {
+      editedRegions.push({ type: "html", ...htmlResult.firstEditRegion });
+    }
+    if (cssResult.firstEditRegion) {
+      editedRegions.push({ type: "css", ...cssResult.firstEditRegion });
+    }
 
     const mergedImages: Record<string, string> = {
       ...(funnel.latest_images as Record<string, string>),
     };
 
     for (const imageEdit of editPlan.imageEdits) {
-      const imagePrompt = buildImageModelPrompt(imageEdit.prompt);
-
-      const imageResult = await generateImage({
-        model: gateway.image("google/imagen-4.0-fast-generate-001"),
-        prompt: imagePrompt,
-        aspectRatio: "16:9",
+      const { generateFunnelMedia } = await import("@/lib/generate-funnel-media");
+      const { dataUrl } = await generateFunnelMedia({
+        prompt: imageEdit.prompt,
+        preferGif: imageEdit.preferGif ?? false,
+        imageModel: gateway.image("google/imagen-4.0-fast-generate-001"),
       });
 
-      const mediaType = imageResult.image.mediaType ?? "image/png";
-      mergedImages[imageEdit.sectionId] = `data:${mediaType};base64,${imageResult.image.base64}`;
+      mergedImages[imageEdit.sectionId] = dataUrl;
     }
 
     const { data: updatedFunnel, error: updateError } = await supabase
@@ -228,6 +277,7 @@ ${funnel.latest_css}`,
     return NextResponse.json({
       funnel: updatedFunnel,
       editPlan,
+      editedRegions,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown server error";

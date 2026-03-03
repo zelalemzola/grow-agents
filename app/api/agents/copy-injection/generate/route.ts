@@ -1,8 +1,8 @@
 import {
   createUIMessageStream,
   createUIMessageStreamResponse,
-  generateImage,
   generateObject,
+  streamObject,
 } from "ai";
 import { NextResponse } from "next/server";
 import { z } from "zod";
@@ -11,14 +11,12 @@ import {
   htmlCssSchema,
   sectionPlanSchema,
 } from "@/lib/copy-injection";
-import {
-  buildImageModelPrompt,
-  buildVisualDescription,
-} from "@/lib/image-prompt-builder";
+import { buildVisualDescription } from "@/lib/image-prompt-builder";
 import {
   agent1PromptContext,
   FUNNEL_GENERATION_EXTRA_SYSTEM_PROMPT,
 } from "@/lib/agent1-guidelines";
+import { IMAGE_GENERATION_GUIDELINE } from "@/lib/image-generation-guideline";
 import { getGateway } from "@/lib/ai-gateway";
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 
@@ -46,8 +44,10 @@ type ProgressEvent = {
     | "step"
     | "warning"
     | "error"
-    | "done";
-  message: string;
+    | "done"
+    | "html-stream"
+    | "css-stream";
+  message?: string;
   payload?: Record<string, unknown>;
 };
 
@@ -137,9 +137,10 @@ For each section include:
 - title
 - content
 - ctaLabel (string when relevant, otherwise null)
-- imagePrompt (string when relevant, otherwise null)
+- imagePrompt: A concrete 1-2 sentence visual description for this section's image. MUST directly illustrate this section's content. Follow advertorial rules: editorial, candid, no text/logos. Headline images create curiosity without revealing the solution. Body images explain the single core idea. Be specific to the copy.
+- preferGif: Set true when the image guideline requires animation. Use GIF when: (a) HEADLINE implies process, transformation, hidden cause, or change over time; (b) BODY explains mechanism, digestion, absorption, delivery path, or cause-and-effect over time; (c) PRODUCT section shows mechanism/delivery. Use false for static moments, conditions, comparisons, simple "this is happening" scenes.
 
-Important: every section object MUST include both ctaLabel and imagePrompt keys.`,
+Important: every section object MUST include ctaLabel, imagePrompt, and preferGif. imagePrompt must be content-specific, not generic.`,
   });
 
   const sectionPlan = sectionPlanResult.object;
@@ -156,11 +157,8 @@ Important: every section object MUST include both ctaLabel and imagePrompt keys.
     type: "status",
     message: "Building HTML/CSS layout from section plan.",
   });
-  const htmlCssResult = await generateObject({
-    model: gateway("openai/gpt-4.1"),
-    schema: htmlCssSchema,
-    system: FUNNEL_GENERATION_EXTRA_SYSTEM_PROMPT,
-    prompt: `${copyContext}
+
+  const htmlCssPrompt = `${copyContext}
 
 You are an expert HTML/CSS funnel builder.
 
@@ -190,11 +188,27 @@ Template HTML scaffold:
 ${template?.html_scaffold ?? "N/A"}
 
 Template CSS scaffold:
-${template?.css_scaffold ?? "N/A"}`,
+${template?.css_scaffold ?? "N/A"}`;
+
+  const { partialObjectStream, object: htmlCssObject } = streamObject({
+    model: gateway("openai/gpt-4.1"),
+    schema: htmlCssSchema,
+    system: FUNNEL_GENERATION_EXTRA_SYSTEM_PROMPT,
+    prompt: htmlCssPrompt,
   });
 
-  const html = htmlCssResult.object.html;
-  const css = htmlCssResult.object.css;
+  for await (const partial of partialObjectStream) {
+    if (typeof partial.html === "string" && partial.html.length > 0) {
+      emit({ type: "html-stream", payload: { value: partial.html } });
+    }
+    if (typeof partial.css === "string" && partial.css.length > 0) {
+      emit({ type: "css-stream", payload: { value: partial.css } });
+    }
+  }
+
+  const htmlCssResult = await htmlCssObject;
+  const html = htmlCssResult.html;
+  const css = htmlCssResult.css;
 
   const imageCandidates = sectionPlan.sections
     .filter((section) => Boolean(section.title || section.content))
@@ -208,28 +222,44 @@ ${template?.css_scaffold ?? "N/A"}`,
 
   const generatedImages: Record<string, string> = {};
 
+  const funnelContext = {
+    objective: parsedData.objective,
+    pageName: sectionPlan.pageName,
+    sectionSummaries: sectionPlan.sections.map((s) => ({
+      id: s.id,
+      title: s.title,
+      contentPreview: s.content.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 120),
+    })),
+  };
+
   for (const section of imageCandidates) {
     emit({
       type: "reasoning",
-      message: `Generating image for section "${section.id}".`,
+      message: `Generating image for section "${section.id}"${section.preferGif ? " (GIF/motion preferred)" : ""}.`,
       payload: { sectionId: section.id },
     });
 
     const visualDescription = await buildVisualDescription(
-      { title: section.title, content: section.content, id: section.id },
+      {
+        title: section.title,
+        content: section.content,
+        id: section.id,
+        type: section.type,
+        imagePrompt: section.imagePrompt,
+        preferGif: section.preferGif,
+      },
       gateway("openai/gpt-4.1-mini"),
+      funnelContext,
     );
 
-    const imagePrompt = buildImageModelPrompt(visualDescription);
-
-    const imageResult = await generateImage({
-      model: gateway.image("google/imagen-4.0-fast-generate-001"),
-      prompt: imagePrompt,
-      aspectRatio: "16:9",
+    const { generateFunnelMedia } = await import("@/lib/generate-funnel-media");
+    const { dataUrl } = await generateFunnelMedia({
+      prompt: visualDescription,
+      preferGif: section.preferGif ?? false,
+      imageModel: gateway.image("google/imagen-4.0-fast-generate-001"),
     });
 
-    const mediaType = imageResult.image.mediaType ?? "image/png";
-    generatedImages[section.id] = `data:${mediaType};base64,${imageResult.image.base64}`;
+    generatedImages[section.id] = dataUrl;
   }
 
   emit({

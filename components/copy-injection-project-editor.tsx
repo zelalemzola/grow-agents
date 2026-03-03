@@ -2,7 +2,25 @@
 
 import JSZip from "jszip";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  Sparkles,
+  MessageSquare,
+  Bot,
+  Download,
+  Save,
+  RotateCcw,
+  Code2,
+  Palette,
+  Eye,
+  History,
+  FileText,
+  FolderOpen,
+  BookOpen,
+  Loader2,
+  CheckCircle2,
+  Zap,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,8 +34,16 @@ import {
 
 type CodeTab = "html" | "css";
 type GenerationStreamEvent = {
-  type: "status" | "reasoning" | "step" | "warning" | "error" | "done";
-  message: string;
+  type:
+    | "status"
+    | "reasoning"
+    | "step"
+    | "warning"
+    | "error"
+    | "done"
+    | "html-stream"
+    | "css-stream";
+  message?: string;
   payload?: Record<string, unknown>;
 };
 
@@ -49,6 +75,14 @@ export function CopyInjectionProjectEditor({
   const [isSavingManual, setIsSavingManual] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
   const [generationTrace, setGenerationTrace] = useState<string[]>([]);
+
+  const htmlTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const cssTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const pendingHighlightRef = useRef<{
+    type: "html" | "css";
+    startIndex: number;
+    endIndex: number;
+  } | null>(null);
 
   const currentProject = useMemo(
     () => projects.find((project) => project.id === selectedProjectId) ?? null,
@@ -104,6 +138,36 @@ export function CopyInjectionProjectEditor({
     setImagesDraft((currentProject.latest_images ?? {}) as Record<string, string>);
   }, [currentProject]);
 
+  useEffect(() => {
+    const pending = pendingHighlightRef.current;
+    if (!pending) return;
+
+    const apply = () => {
+      const el =
+        pending.type === "html"
+          ? htmlTextareaRef.current
+          : cssTextareaRef.current;
+      if (!el) return;
+
+      const { startIndex, endIndex } = pending;
+      const len = el.value.length;
+      const safeStart = Math.max(0, Math.min(startIndex, len));
+      const safeEnd = Math.max(safeStart, Math.min(endIndex, len));
+
+      el.focus();
+      el.setSelectionRange(safeStart, safeEnd);
+      el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+
+      pendingHighlightRef.current = null;
+      setTimeout(() => el.setSelectionRange(safeStart, safeEnd), 100);
+    };
+
+    const t = requestAnimationFrame(() => {
+      requestAnimationFrame(apply);
+    });
+    return () => cancelAnimationFrame(t);
+  }, [activeCodeTab, htmlDraft, cssDraft]);
+
   const refreshProjects = async (keepProjectId?: string) => {
     const response = await fetch("/api/agents/copy-injection/funnels");
     const data = await response.json();
@@ -125,6 +189,9 @@ export function CopyInjectionProjectEditor({
     setIsGenerating(true);
     setStatus("Generating new project...");
     setGenerationTrace([]);
+    setHtmlDraft("");
+    setCssDraft("");
+    setImagesDraft({});
 
     try {
       const response = await fetch("/api/agents/copy-injection/generate", {
@@ -173,12 +240,21 @@ export function CopyInjectionProjectEditor({
         if (chunk.type === "data-generation-event") {
           const event = chunk.data as GenerationStreamEvent;
           if (event.type === "error") {
-            streamError = event.message;
-            setStatus(`Generation failed: ${event.message}`);
+            streamError = event.message ?? "Unknown error";
+            setStatus(`Generation failed: ${streamError}`);
             return;
           }
 
-          if (event.type !== "done") {
+          if (event.type === "html-stream" && event.payload?.value != null) {
+            setHtmlDraft(String(event.payload.value));
+            return;
+          }
+          if (event.type === "css-stream" && event.payload?.value != null) {
+            setCssDraft(String(event.payload.value));
+            return;
+          }
+
+          if (event.type !== "done" && event.message) {
             setGenerationTrace((previous) => [
               ...previous,
               `${event.type.toUpperCase()}: ${event.message}`,
@@ -241,6 +317,8 @@ export function CopyInjectionProjectEditor({
         body: JSON.stringify({
           funnelId: selectedProjectId,
           editComment,
+          currentHtml: htmlDraft || undefined,
+          currentCss: cssDraft || undefined,
         }),
       });
 
@@ -250,6 +328,20 @@ export function CopyInjectionProjectEditor({
       }
 
       const updated = data.funnel as FunnelRecord;
+      const editedRegions = data.editedRegions as
+        | Array<{ type: "html" | "css"; startIndex: number; endIndex: number }>
+        | undefined;
+
+      setHtmlDraft(updated.latest_html ?? "");
+      setCssDraft(updated.latest_css ?? "");
+      setImagesDraft((updated.latest_images ?? {}) as Record<string, string>);
+
+      if (editedRegions?.length) {
+        const first = editedRegions[0];
+        setActiveCodeTab(first.type);
+        pendingHighlightRef.current = first;
+      }
+
       await refreshProjects(updated.id);
       await refreshVersions(updated.id);
       setStatus("AI edit applied.");
@@ -373,54 +465,82 @@ ${htmlWithImages}
   const preview = createPreviewSrcDoc(htmlDraft, cssDraft, imagesDraft);
 
   return (
-    <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
-      <section className="flex min-h-[80vh] flex-col rounded-xl border bg-card">
-        <div className="border-b p-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-lg font-semibold">Project Builder</h1>
-            <span className="text-xs text-muted-foreground">{status}</span>
+    <div className="grid gap-6 xl:grid-cols-[1fr_1fr]">
+      <section className="flex min-h-[80vh] flex-col overflow-hidden rounded-xl border border-border/60 bg-card shadow-sm">
+        {/* Header */}
+        <div className="border-b border-border/60 bg-muted/30 px-5 py-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <div className="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <Sparkles className="size-5" />
+              </div>
+              <div>
+                <h1 className="font-semibold tracking-tight">Project Builder</h1>
+                <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  {isGenerating ? (
+                    <>
+                      <Loader2 className="size-3.5 animate-spin" />
+                      {status}
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="size-3.5 text-emerald-500" />
+                      {status}
+                    </>
+                  )}
+                </p>
+              </div>
+            </div>
           </div>
-
-          <div className="mt-3 grid gap-3 md:grid-cols-2">
-            <Input
-              value={funnelName}
-              onChange={(event) => setFunnelName(event.target.value)}
-              placeholder="Project name"
-            />
-            <select
-              className="h-9 rounded-md border bg-background px-3 text-sm"
-              value={selectedProjectId}
-              onChange={(event) => setSelectedProjectId(event.target.value)}
-            >
-              <option value="">No project selected</option>
-              {projects.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.name}
-                </option>
-              ))}
-            </select>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <div className="relative">
+              <FileText className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={funnelName}
+                onChange={(event) => setFunnelName(event.target.value)}
+                placeholder="Project name"
+                className="pl-9"
+              />
+            </div>
+            <div className="relative">
+              <FolderOpen className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <select
+                className="h-9 w-full rounded-md border border-input bg-background pl-9 pr-8 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring"
+                value={selectedProjectId}
+                onChange={(event) => setSelectedProjectId(event.target.value)}
+              >
+                <option value="">No project selected</option>
+                {projects.map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {project.name}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
         </div>
 
-        <div className="border-b p-4">
-          <h2 className="text-sm font-medium text-muted-foreground">
-            Prompting Panel (V0-style flow)
+        {/* Prompting Panel */}
+        <div className="border-b border-border/60 px-5 py-4">
+          <h2 className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+            <MessageSquare className="size-4" />
+            Prompting Panel
           </h2>
           <textarea
-            className="mt-2 min-h-24 w-full rounded-md border bg-background p-3 text-sm"
+            className="mt-3 min-h-24 w-full rounded-lg border border-input bg-background px-3 py-2.5 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
             value={objective}
             onChange={(event) => setObjective(event.target.value)}
             placeholder="Describe the funnel objective and offer..."
           />
           <textarea
-            className="mt-2 min-h-20 w-full rounded-md border bg-background p-3 text-sm"
+            className="mt-3 min-h-20 w-full rounded-lg border border-input bg-background px-3 py-2.5 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
             value={campaignContext}
             onChange={(event) => setCampaignContext(event.target.value)}
             placeholder="Audience, angle, objections, policy constraints..."
           />
-          <div className="mt-2 flex gap-2">
+          <div className="mt-3 flex flex-wrap gap-2">
             <select
-              className="h-9 flex-1 rounded-md border bg-background px-3 text-sm"
+              className="h-9 flex-1 min-w-[140px] rounded-lg border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
               value={selectedTemplateId}
               onChange={(event) => setSelectedTemplateId(event.target.value)}
             >
@@ -434,134 +554,193 @@ ${htmlWithImages}
             <Button
               onClick={handleGenerate}
               disabled={isGenerating || objective.trim().length < 12}
+              className="gap-2"
             >
+              {isGenerating ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Zap className="size-4" />
+              )}
               {isGenerating ? "Generating..." : "Generate"}
             </Button>
-            <Button asChild variant="outline">
-              <Link href="/agents/copy-injection/templates">Train Templates</Link>
+            <Button asChild variant="outline" className="gap-2">
+              <Link href="/agents/copy-injection/templates">
+                <BookOpen className="size-4" />
+                Train Templates
+              </Link>
             </Button>
           </div>
           {generationTrace.length > 0 ? (
-            <div className="mt-3 max-h-36 overflow-auto rounded-md border bg-muted/30 p-2 text-xs text-muted-foreground">
+            <div className="mt-3 max-h-36 overflow-auto rounded-lg border border-border/60 bg-muted/20 p-3 text-xs text-muted-foreground">
+              <p className="mb-1.5 font-medium text-foreground/80">Generation trace</p>
               {generationTrace.map((line, index) => (
-                <p key={`${line}-${index}`}>{line}</p>
+                <p key={`${line}-${index}`} className="flex items-center gap-2 py-0.5">
+                  <span className="size-1.5 shrink-0 rounded-full bg-primary/50" />
+                  {line}
+                </p>
               ))}
             </div>
           ) : null}
         </div>
 
-        <div className="border-b p-4">
-          <h2 className="text-sm font-medium text-muted-foreground">
+        {/* AI Edit */}
+        <div className="border-b border-border/60 px-5 py-4">
+          <h2 className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+            <Bot className="size-4" />
             AI Edit + Version Control
           </h2>
           <textarea
-            className="mt-2 min-h-20 w-full rounded-md border bg-background p-3 text-sm"
+            className="mt-3 min-h-20 w-full rounded-lg border border-input bg-background px-3 py-2.5 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
             value={editComment}
             onChange={(event) => setEditComment(event.target.value)}
             placeholder="Tell AI exactly what to edit. Example: only rewrite hero headline and subheadline."
           />
-          <div className="mt-2 flex gap-2">
+          <div className="mt-3 flex flex-wrap gap-2">
             <Button
               onClick={handleAiEdit}
               disabled={isAiEditing || !selectedProjectId || editComment.trim().length < 4}
+              className="gap-2"
             >
+              {isAiEditing ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Sparkles className="size-4" />
+              )}
               {isAiEditing ? "Applying..." : "Apply AI Edit"}
             </Button>
             <Button
               variant="outline"
               onClick={handleDownloadZip}
               disabled={!selectedProjectId}
+              className="gap-2"
             >
-              Download HTML + CSS ZIP
+              <Download className="size-4" />
+              Download ZIP
             </Button>
           </div>
         </div>
 
-        <div className="flex-1 overflow-hidden p-4">
-          <div className="flex h-full flex-col gap-3">
-            <div className="flex items-center gap-2">
-              <Button
-                variant={activeCodeTab === "html" ? "default" : "outline"}
-                size="sm"
-                onClick={() => setActiveCodeTab("html")}
-              >
-                HTML
-              </Button>
-              <Button
-                variant={activeCodeTab === "css" ? "default" : "outline"}
-                size="sm"
-                onClick={() => setActiveCodeTab("css")}
-              >
-                CSS
-              </Button>
+        {/* Code Editor */}
+        <div className="flex flex-1 flex-col overflow-hidden p-5">
+          <div className="flex h-full flex-col gap-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex rounded-lg border border-border/60 p-0.5">
+                <Button
+                  variant={activeCodeTab === "html" ? "default" : "ghost"}
+                  size="sm"
+                  onClick={() => setActiveCodeTab("html")}
+                  className="gap-1.5"
+                >
+                  <Code2 className="size-4" />
+                  HTML
+                </Button>
+                <Button
+                  variant={activeCodeTab === "css" ? "default" : "ghost"}
+                  size="sm"
+                  onClick={() => setActiveCodeTab("css")}
+                  className="gap-1.5"
+                >
+                  <Palette className="size-4" />
+                  CSS
+                </Button>
+              </div>
               <Input
                 value={manualSaveNote}
                 onChange={(event) => setManualSaveNote(event.target.value)}
-                placeholder="Manual save note (optional)"
+                placeholder="Save note (optional)"
+                className="h-8 max-w-[180px] text-xs"
               />
               <Button
                 onClick={handleSaveManual}
                 disabled={isSavingManual || !selectedProjectId}
+                size="sm"
+                variant="outline"
+                className="gap-1.5"
               >
-                {isSavingManual ? "Saving..." : "Save Code Version"}
+                {isSavingManual ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Save className="size-4" />
+                )}
+                {isSavingManual ? "Saving..." : "Save Version"}
               </Button>
             </div>
 
             {activeCodeTab === "html" ? (
               <textarea
-                className="h-full min-h-[360px] w-full flex-1 rounded-md border bg-background p-3 font-mono text-xs"
+                ref={htmlTextareaRef}
+                className="h-full min-h-[320px] w-full flex-1 rounded-lg border border-input bg-[#0d1117] p-4 font-mono text-xs text-slate-300 placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                 value={htmlDraft}
                 onChange={(event) => setHtmlDraft(event.target.value)}
+                spellCheck={false}
               />
             ) : (
               <textarea
-                className="h-full min-h-[360px] w-full flex-1 rounded-md border bg-background p-3 font-mono text-xs"
+                ref={cssTextareaRef}
+                className="h-full min-h-[320px] w-full flex-1 rounded-lg border border-input bg-[#0d1117] p-4 font-mono text-xs text-slate-300 placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                 value={cssDraft}
                 onChange={(event) => setCssDraft(event.target.value)}
+                spellCheck={false}
               />
             )}
 
-            <div className="max-h-48 overflow-auto rounded-md border p-2">
-              <p className="text-xs font-medium text-muted-foreground">
-                Version History (restore any checkpoint)
+            <div className="max-h-40 overflow-auto rounded-lg border border-border/60 bg-muted/20 p-3">
+              <p className="mb-2 flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                <History className="size-4" />
+                Version History
               </p>
-              <div className="mt-2 space-y-2">
-                {versions.map((version) => (
-                  <div
-                    key={version.id}
-                    className="rounded-md border p-2"
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="line-clamp-2 text-xs text-muted-foreground">
+              <div className="space-y-2">
+                {versions.length === 0 ? (
+                  <p className="py-4 text-center text-xs text-muted-foreground">
+                    No versions yet
+                  </p>
+                ) : (
+                  versions.map((version) => (
+                    <div
+                      key={version.id}
+                      className="flex items-center justify-between gap-3 rounded-md border border-border/40 bg-background/60 p-2.5 transition-colors hover:bg-muted/40"
+                    >
+                      <p className="line-clamp-2 flex-1 text-xs text-muted-foreground">
                         {version.user_instruction}
                       </p>
                       <Button
                         size="sm"
-                        variant="outline"
+                        variant="ghost"
                         disabled={isRestoring || !selectedProjectId}
                         onClick={() => handleRestoreVersion(version.id)}
+                        className="h-7 gap-1 shrink-0"
                       >
+                        <RotateCcw className="size-3.5" />
                         Restore
                       </Button>
                     </div>
-                  </div>
-                ))}
+                  ))
+                )}
               </div>
             </div>
           </div>
         </div>
       </section>
 
-      <section className="rounded-xl border bg-card p-3">
-        <h2 className="mb-2 text-sm font-medium text-muted-foreground">
-          Live Preview
-        </h2>
-        <iframe
-          title="live-funnel-preview"
-          className="h-[82vh] w-full rounded-md border bg-white"
-          sandbox="allow-same-origin"
-          srcDoc={preview}
-        />
+      {/* Live Preview */}
+      <section className="overflow-hidden rounded-xl border border-border/60 bg-card shadow-sm">
+        <div className="flex items-center justify-between border-b border-border/60 bg-muted/30 px-5 py-3">
+          <h2 className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+            <Eye className="size-4" />
+            Live Preview
+          </h2>
+          <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+            Live
+          </span>
+        </div>
+        <div className="p-3">
+          <iframe
+            title="live-funnel-preview"
+            className="h-[82vh] w-full rounded-lg border border-border/60 bg-white shadow-inner dark:bg-zinc-900"
+            sandbox="allow-same-origin"
+            srcDoc={preview}
+          />
+        </div>
       </section>
     </div>
   );

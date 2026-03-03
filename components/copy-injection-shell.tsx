@@ -2,31 +2,56 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import {
+  LayoutDashboard,
+  FolderPlus,
+  FolderOpen,
+  BookOpen,
+  HomeIcon,
+} from "lucide-react";
+
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarRail,
+  SidebarTrigger,
+} from "@/components/ui/sidebar";
 
 const navItems = [
   {
+    label: "Home",
+    href: "/",
+    icon: HomeIcon,
+  },
+  {
     label: "Dashboard",
     href: "/agents/copy-injection",
+    icon: LayoutDashboard,
   },
   {
     label: "Create New Project",
     href: "/agents/copy-injection/projects/new",
+    icon: FolderPlus,
   },
   {
     label: "View All Projects",
     href: "/agents/copy-injection/projects",
+    icon: FolderOpen,
   },
   {
     label: "Train with Templates",
     href: "/agents/copy-injection/templates",
-  },
-  {
-    label: "Knowledge Base",
-    href: "/agents/copy-injection/knowledge",
-  },
-  {
-    label: "Soon",
-    href: "/agents/copy-injection/soon",
+    icon: BookOpen,
   },
 ];
 
@@ -38,38 +63,69 @@ export function CopyInjectionShell({
   const pathname = usePathname();
 
   return (
-    <div className="min-h-screen bg-muted/40">
-      <div className="mx-auto grid w-full max-w-[1600px] gap-4 p-4 md:grid-cols-[260px_1fr]">
-        <aside className="rounded-xl border bg-card p-4">
-          <h1 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-            Funnel Generator Agent
-          </h1>
-          <nav className="mt-4 space-y-1">
-            {navItems.map((item) => {
-              const active =
-                item.href === "/agents/copy-injection"
-                  ? pathname === item.href
-                  : pathname.startsWith(item.href);
+    <SidebarProvider defaultOpen={false}>
+      <Sidebar collapsible="icon"   className="border-r">
+        <SidebarHeader className="border-b border-sidebar-border">
+          <div className="flex flex-1 items-center gap-2 px-2 py-2">
+            <SidebarTrigger className="-ml-1" />
+            <SidebarGroupLabel className="text-sm font-semibold text-sidebar-foreground group-data-[collapsible=icon]:hidden">
+              Grow Agents
+            </SidebarGroupLabel>
+          </div>
+        </SidebarHeader>
 
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={`block rounded-md px-3 py-2 text-sm transition-colors ${
-                    active
-                      ? "bg-primary/10 text-primary"
-                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                  }`}
-                >
-                  {item.label}
-                </Link>
-              );
-            })}
-          </nav>
-        </aside>
+        <SidebarContent>
+          <SidebarGroup>
+            <SidebarGroupLabel className="group-data-[collapsible=icon]:hidden">
+              Navigation
+            </SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {navItems.map((item) => {
+                  const active =
+                    item.href === "/agents/copy-injection"
+                      ? pathname === item.href
+                      : item.href === "/agents/copy-injection/projects"
+                        ? pathname === item.href
+                        : pathname.startsWith(item.href);
+                  const Icon = item.icon;
 
-        <main className="min-w-0">{children}</main>
-      </div>
-    </div>
+                  return (
+                    <SidebarMenuItem key={item.href}>
+                      <SidebarMenuButton
+                        asChild
+                        isActive={active}
+                        tooltip={item.label}
+                      >
+                        <Link href={item.href}>
+                          <Icon className="size-4 shrink-0" />
+                          <span>{item.label}</span>
+                        </Link>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  );
+                })}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        </SidebarContent>
+
+        <SidebarFooter className="border-t border-sidebar-border group-data-[collapsible=icon]:hidden">
+          <div className="px-2 py-2 text-xs text-sidebar-foreground/70">
+            ⌘B to toggle
+          </div>
+        </SidebarFooter>
+
+        <SidebarRail />
+      </Sidebar>
+
+      <SidebarInset>
+        <header className="flex h-12 shrink-0 items-center gap-2 border-b bg-background px-4 md:hidden">
+          <SidebarTrigger />
+          <span className="font-medium">Grow Agents</span>
+        </header>
+        <div className="flex-1 overflow-auto p-4 md:p-6">{children}</div>
+      </SidebarInset>
+    </SidebarProvider>
   );
 }
