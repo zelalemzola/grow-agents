@@ -174,7 +174,7 @@ EDITING STRATEGY (CRITICAL):
 5. NEVER return full section rewrites. NEVER replace more than ~30% of the file.
 6. If the user wants to change one headline, your "find" should be just that headline text (or the enclosing tag), not the whole section.
 7. Preserve all unrelated structure, image placeholders {{image:SECTION_ID}}, and styling.
-8. If no HTML or CSS changes are required, return empty arrays.
+8. You MUST always return htmlEdits and cssEdits. Use empty arrays [] when no changes are needed.
 
 IMAGE-ONLY REQUESTS: If the user's request is ONLY about images (e.g. "the image under X looks...", "make the hero image seem..."), you MUST return empty htmlEdits and empty cssEdits. Do not touch HTML or CSS. Only image regeneration will be applied separately.
 

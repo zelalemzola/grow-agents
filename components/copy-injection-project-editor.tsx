@@ -357,6 +357,10 @@ export function CopyInjectionProjectEditor({
       setStatus("Select a project first.");
       return;
     }
+    if (!htmlDraft.trim() || !cssDraft.trim()) {
+      setStatus("HTML and CSS cannot be empty. Generate or restore a funnel first.");
+      return;
+    }
 
     setIsSavingManual(true);
     setStatus("Saving manual code edits...");

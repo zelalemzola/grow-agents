@@ -133,7 +133,8 @@ export function CopyInjectionWorkspace() {
         return;
       }
 
-      let finalData: null | { funnel: FunnelRecord } = null;
+      type GenerationResult = { funnel: FunnelRecord };
+      let finalData: GenerationResult | null = null;
       let streamError: string | null = null;
 
       await readUiMessageSseStream(response, (chunk: UiStreamChunk) => {
@@ -155,8 +156,8 @@ export function CopyInjectionWorkspace() {
           return;
         }
 
-        if (chunk.type === "data-generation-result") {
-          finalData = chunk.data as { funnel: FunnelRecord };
+        if (chunk.type === "data-generation-result" && chunk.data) {
+          finalData = chunk.data as GenerationResult;
           setStatus("Funnel generated successfully.");
         }
       });
@@ -169,7 +170,7 @@ export function CopyInjectionWorkspace() {
         throw new Error("Generation stream ended without final payload.");
       }
 
-      const createdFunnel: FunnelRecord = finalData.funnel;
+      const createdFunnel: FunnelRecord = (finalData as GenerationResult).funnel;
       setFunnels((previous) => [createdFunnel, ...previous]);
       setSelectedFunnelId(createdFunnel.id);
       setEditComment("");
@@ -185,6 +186,10 @@ export function CopyInjectionWorkspace() {
       setStatus("Select or generate a funnel first.");
       return;
     }
+    if (!currentFunnel) {
+      setStatus("Funnel not loaded. Please try again.");
+      return;
+    }
 
     setIsEditing(true);
     setStatus("Applying targeted edit to HTML/CSS and related images...");
@@ -195,6 +200,8 @@ export function CopyInjectionWorkspace() {
         body: JSON.stringify({
           funnelId: selectedFunnelId,
           editComment,
+          currentHtml: currentFunnel.latest_html ?? undefined,
+          currentCss: currentFunnel.latest_css ?? undefined,
         }),
       });
 

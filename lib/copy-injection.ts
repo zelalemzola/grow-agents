@@ -54,10 +54,10 @@ const targetedCodeEditSchema = z.object({
   rationale: z.string().nullable(),
 });
 
-// notes is required by schema but can be null for strict response_format APIs
+// All fields required for strict response_format; use empty arrays when no edits needed
 export const targetedEditSchema = z.object({
-  htmlEdits: z.array(targetedCodeEditSchema).default([]),
-  cssEdits: z.array(targetedCodeEditSchema).default([]),
+  htmlEdits: z.array(targetedCodeEditSchema),
+  cssEdits: z.array(targetedCodeEditSchema),
   notes: z.string().nullable(),
 });
 

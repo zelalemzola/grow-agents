@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import crypto from "node:crypto";
-import { PDFParse } from "pdf-parse";
 import { z } from "zod";
+
+// pdf-parse pulls in pdfjs-dist which uses browser APIs (DOMMatrix, etc.).
+// Dynamic import avoids loading it at build time when Next.js collects page data.
 
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 
@@ -108,6 +110,7 @@ export async function POST(request: Request) {
 
   try {
     if (lowerName.endsWith(".pdf")) {
+      const { PDFParse } = await import("pdf-parse");
       const parser = new PDFParse({ data: fileBuffer });
       try {
         const parsedPdf = await parser.getText();
