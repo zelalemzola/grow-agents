@@ -14,18 +14,35 @@ interface Params {
 }
 
 export async function POST(request: Request, { params }: Params) {
-  const { id } = await params;
-  const supabase = await createServerSupabaseClient();
+  try {
+    const { id } = await params;
+    const supabase = await createServerSupabaseClient();
 
-  const body = await request.json();
-  const parsed = manualSaveSchema.safeParse(body);
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json(
+        { error: "Invalid JSON body" },
+        { status: 400 },
+      );
+    }
 
-  if (!parsed.success) {
-    return NextResponse.json(
-      { error: parsed.error.flatten() },
-      { status: 400 },
-    );
-  }
+    if (body == null || typeof body !== "object") {
+      return NextResponse.json(
+        { error: "Request body must be an object with html and css" },
+        { status: 400 },
+      );
+    }
+
+    const parsed = manualSaveSchema.safeParse(body);
+
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: parsed.error.flatten() },
+        { status: 400 },
+      );
+    }
 
   const { data: funnel, error: funnelError } = await supabase
     .from("funnels")
@@ -57,13 +74,15 @@ export async function POST(request: Request, { params }: Params) {
     );
   }
 
+  const versionImages = (funnel.latest_images ?? {}) as Record<string, string>;
+
   const { error: versionError } = await supabase.from("funnel_versions").insert({
     funnel_id: id,
     source: "edit",
-    user_instruction: parsed.data.note?.trim() || "Manual code edit",
+    user_instruction: parsed.data.note?.trim() || "Manual save",
     html: parsed.data.html,
     css: parsed.data.css,
-    images: funnel.latest_images,
+    images: versionImages,
     section_plan: {
       type: "manual",
     },
@@ -74,4 +93,8 @@ export async function POST(request: Request, { params }: Params) {
   }
 
   return NextResponse.json({ funnel: updatedFunnel });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown server error";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
 }

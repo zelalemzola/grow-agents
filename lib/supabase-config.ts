@@ -12,3 +12,8 @@ export function getSupabaseConfig() {
 
   return { url, anonKey };
 }
+
+/** Service role key for server-side operations that bypass RLS (e.g. Storage uploads). */
+export function getSupabaseServiceRoleKey(): string | undefined {
+  return process.env.SUPABASE_SERVICE_ROLE_KEY;
+}

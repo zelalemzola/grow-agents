@@ -1,3 +1,4 @@
+import { createUIMessageStream, createUIMessageStreamResponse } from "ai";
 import { generateObject } from "ai";
 import { NextResponse } from "next/server";
 import { z } from "zod";
@@ -8,8 +9,15 @@ import {
   FUNNEL_GENERATION_EXTRA_SYSTEM_PROMPT,
 } from "@/lib/agent1-guidelines";
 import { editPlanSchema, targetedEditSchema } from "@/lib/copy-injection";
+import { extractEditContext } from "@/lib/edit-context-extractor";
+import { uploadImagesMapToStorage } from "@/lib/funnel-image-storage";
 import { getGateway } from "@/lib/ai-gateway";
-import { createServerSupabaseClient } from "@/utils/supabase/server";
+import {
+  createServerSupabaseClient,
+  createSupabaseAdminClient,
+} from "@/utils/supabase/server";
+
+export const maxDuration = 300;
 
 const editSchema = z.object({
   funnelId: z.string().uuid(),
@@ -17,7 +25,15 @@ const editSchema = z.object({
   /** Optional: use latest draft from client instead of DB (ensures edits apply to unsaved changes). */
   currentHtml: z.string().optional(),
   currentCss: z.string().optional(),
+  /** When true, stream progress events for chain-of-thought display */
+  stream: z.boolean().optional(),
 });
+
+type EditProgressEvent = {
+  type: "status" | "reasoning" | "step" | "done" | "error" | "warning";
+  message?: string;
+  payload?: Record<string, unknown>;
+};
 
 type TargetedCodeEdit = z.infer<typeof targetedEditSchema>["htmlEdits"][number];
 
@@ -81,48 +97,61 @@ function applyTargetedEdits(
   return { result: next, firstEditRegion };
 }
 
-export async function POST(request: Request) {
-  try {
-    const supabase = await createServerSupabaseClient();
-    const json = await request.json();
-    const parsed = editSchema.safeParse(json);
+type EditResult = {
+  success: boolean;
+  funnelId: string;
+  editPlan: unknown;
+  editedRegions: Array<{ type: "html" | "css"; startIndex: number; endIndex: number }>;
+  latest_html: string;
+  latest_css: string;
+  latest_images: Record<string, string>;
+};
 
-    if (!parsed.success) {
-      return NextResponse.json(
-        { error: parsed.error.flatten() },
-        { status: 400 },
-      );
-    }
+async function runEdit(
+  parsed: z.infer<typeof editSchema>,
+  emit: (event: EditProgressEvent) => void,
+): Promise<EditResult> {
+  const supabase = await createServerSupabaseClient();
 
-    const { data: funnel, error: funnelError } = await supabase
-      .from("funnels")
-      .select("*")
-      .eq("id", parsed.data.funnelId)
-      .single();
+  emit({ type: "status", message: "Loading funnel..." });
+  const { data: funnel, error: funnelError } = await supabase
+    .from("funnels")
+    .select("*")
+    .eq("id", parsed.funnelId)
+    .single();
 
-    if (funnelError || !funnel) {
-      return NextResponse.json(
-        { error: `Funnel lookup failed: ${funnelError?.message}` },
-        { status: 404 },
-      );
-    }
+  if (funnelError || !funnel) {
+    throw new Error(`Funnel lookup failed: ${funnelError?.message}`);
+  }
 
-    // Use client's current draft when provided (so edits apply to unsaved changes)
-    const workingHtml =
-      parsed.data.currentHtml != null && parsed.data.currentHtml.trim().length > 0
-        ? parsed.data.currentHtml
-        : (funnel.latest_html as string);
-    const workingCss =
-      parsed.data.currentCss != null && parsed.data.currentCss.trim().length > 0
-        ? parsed.data.currentCss
-        : (funnel.latest_css as string);
+  const workingHtml =
+    parsed.currentHtml != null && parsed.currentHtml.trim().length > 0
+      ? parsed.currentHtml
+      : (funnel.latest_html as string);
+  const workingCss =
+    parsed.currentCss != null && parsed.currentCss.trim().length > 0
+      ? parsed.currentCss
+      : (funnel.latest_css as string);
 
-    // Knowledge base disabled for now to reduce latency
-    const copyContext = agent1PromptContext([], "copy");
+  const copyContext = agent1PromptContext([], "copy");
+  const gateway = getGateway();
 
-    const gateway = getGateway();
+  const existingImages = (funnel.latest_images ?? {}) as Record<string, string>;
+  const idsFromHtml = [...workingHtml.matchAll(/\{\{image:([a-zA-Z0-9_-]+)\}\}/g)].map(
+    (m) => m[1],
+  );
+  const idsFromImages = Object.keys(existingImages);
+  const orderedIds = [...new Map(idsFromHtml.map((id) => [id, 1])).keys()];
+  for (const id of idsFromImages) {
+    if (!orderedIds.includes(id)) orderedIds.push(id);
+  }
+  const sectionIdsNote =
+    orderedIds.length > 0
+      ? `\n\nSECTION IDs in document order (use EXACT strings; "first image"=#1, "third image"=#3):\n${orderedIds.map((id, i) => `${i + 1}. ${id}`).join("\n")}`
+      : "";
 
-    const editPlanResult = await generateObject({
+  emit({ type: "reasoning", message: "Analyzing your edit request..." });
+  const editPlanResult = await generateObject({
       model: gateway("openai/gpt-4.1-mini"),
       schema: editPlanSchema,
       system: `${FUNNEL_GENERATION_EXTRA_SYSTEM_PROMPT}
@@ -139,59 +168,116 @@ Analyze the user's edit request and decide:
 CRITICAL - IMAGE-ONLY REQUESTS:
 - If the user ONLY mentions images (e.g. "the image under...", "make the hero image...", "the picture looks...", "change the image to seem..."), then you MUST return ONLY imageEdits.
 - Do NOT suggest HTML or CSS changes when the user is talking about images alone.
-- Map the user's image feedback to the correct sectionId (e.g. hero, headline, first body section) and write a new image prompt.
+- Map the user's image feedback to the correct sectionId. You MUST use one of the available section IDs listed below - no guessing.
+- For "image under the headline" or "first image" use the first section ID; for "third image" use the third; etc.
 
 IMAGE PROMPTS MUST follow the advertorial guideline: editorial, candid, no text/logos, related to the section content and funnel objective.
 
 Current funnel objective:
 ${funnel.objective}
+${sectionIdsNote}
 
 User edit request:
-${parsed.data.editComment}
+${parsed.editComment}
 
-Return concise summary and imageEdits (sectionId + prompt + preferGif). If no image changes are needed, return empty imageEdits.
+Return concise summary, htmlCssChangesNeeded, and imageEdits.
+- htmlCssChangesNeeded: set TRUE only if the user wants to change text, headlines, layout, styling, or HTML/CSS structure. Set FALSE when the request is ONLY about images (e.g. "change the hero image", "regenerate the picture under...", "make the image seem...") or when no edits are needed.
+- imageEdits: (sectionId + prompt + preferGif). Empty if no image changes.
 
 For each imageEdit:
 - prompt: 1-2 sentence description of what the new photograph should show (people, setting, objects, mood). Describe the visual scene only - specific to the funnel content. No instructions or meta-commentary.
 - preferGif: set true when the guideline requires animation (headline implying process/transformation, body explaining mechanism/digestion/absorption, product mechanism). Otherwise false.`,
     });
 
-    const editPlan = editPlanResult.object;
+  const editPlan = editPlanResult.object;
 
-    const targetedEditsResult = await generateObject({
-      model: gateway("openai/gpt-4.1"),
-      schema: targetedEditSchema,
-      system: FUNNEL_GENERATION_EXTRA_SYSTEM_PROMPT,
-      prompt: `${copyContext}
+  const resolveSectionId = (id: string): string => {
+    if (orderedIds.includes(id)) return id;
+    const lower = id.toLowerCase();
+    const match = orderedIds.find((s) => s.toLowerCase() === lower || s.toLowerCase().includes(lower));
+    if (match) return match;
+    if (/^\d+$/.test(id) && orderedIds[parseInt(id, 10) - 1]) {
+      return orderedIds[parseInt(id, 10) - 1];
+    }
+    return id;
+  };
+
+  const resolvedImageEdits = editPlan.imageEdits.map((e) => ({
+    ...e,
+    sectionId: resolveSectionId(e.sectionId),
+  }));
+  if (resolvedImageEdits.some((e, i) => e.sectionId !== editPlan.imageEdits[i].sectionId)) {
+    emit({
+      type: "reasoning",
+      message: `Resolved section IDs to match document: ${resolvedImageEdits.map((e) => e.sectionId).join(", ")}`,
+    });
+  }
+  editPlan.imageEdits = resolvedImageEdits;
+
+  emit({
+    type: "reasoning",
+    message: `Plan: ${editPlan.summary}. HTML/CSS changes: ${editPlan.htmlCssChangesNeeded ? "yes" : "no"}. Images to regenerate: ${editPlan.imageEdits.length}.`,
+  });
+
+  let updatedHtml = workingHtml;
+  let updatedCss = workingCss;
+  const editedRegions: Array<{
+    type: "html" | "css";
+    startIndex: number;
+    endIndex: number;
+  }> = [];
+
+  let targetedEdits: z.infer<typeof targetedEditSchema> = {
+    htmlEdits: [],
+    cssEdits: [],
+    notes: null,
+  };
+
+  if (editPlan.htmlCssChangesNeeded) {
+    emit({ type: "status", message: "Applying targeted HTML/CSS edits..." });
+    const { htmlExcerpt, cssExcerpt } = extractEditContext(
+      workingHtml,
+      workingCss,
+      parsed.editComment,
+      editPlan.summary,
+    );
+
+      const excerptNote =
+        htmlExcerpt.length < workingHtml.length
+          ? `\n(HTML excerpt - only edit within this; find must be exact substring. Full doc: ${workingHtml.length} chars.)`
+          : "";
+
+      const targetedEditsResult = await generateObject({
+        model: gateway("openai/gpt-4.1-mini"),
+        schema: targetedEditSchema,
+        system: FUNNEL_GENERATION_EXTRA_SYSTEM_PROMPT,
+        prompt: `${copyContext}
 
 You are a funnel code editor that makes TARGETED, MINIMAL edits — like a coding assistant.
 
 EDITING STRATEGY (CRITICAL):
 1. Parse the user's request and identify the EXACT section(s) they want changed (e.g. hero headline, body paragraph 2, CTA button).
-2. Route through the HTML/CSS to find that specific section. Look for section IDs, class names, or distinctive text.
-3. Output ONLY find/replace pairs. Each "find" MUST be an EXACT character-for-character copy of a snippet from the current code.
-4. Each "find" must be as MINIMAL as possible — the smallest unique substring that contains only what needs to change.
-5. NEVER return full section rewrites. NEVER replace more than ~30% of the file.
-6. If the user wants to change one headline, your "find" should be just that headline text (or the enclosing tag), not the whole section.
-7. Preserve all unrelated structure, image placeholders {{image:SECTION_ID}}, and styling.
-8. You MUST always return htmlEdits and cssEdits. Use empty arrays [] when no changes are needed.
-
-IMAGE-ONLY REQUESTS: If the user's request is ONLY about images (e.g. "the image under X looks...", "make the hero image seem..."), you MUST return empty htmlEdits and empty cssEdits. Do not touch HTML or CSS. Only image regeneration will be applied separately.
+2. Output ONLY find/replace pairs. Each "find" MUST be an EXACT character-for-character copy of a snippet from the HTML/CSS below.
+3. Each "find" must be as MINIMAL as possible — the smallest unique substring that contains only what needs to change.
+4. NEVER return full section rewrites. NEVER replace more than ~30% of the excerpt.
+5. Preserve all unrelated structure, image placeholders {{image:SECTION_ID}}, and styling.
+6. You MUST always return htmlEdits and cssEdits. Use empty arrays [] when no changes are needed.
 
 User request:
-${parsed.data.editComment}
+${parsed.editComment}
 
 Edit summary:
 ${editPlan.summary}
+${excerptNote}
 
-Current HTML (edit only the relevant part; copy "find" exactly from here):
-${workingHtml}
+Current HTML:
+${htmlExcerpt}
 
-Current CSS (edit only the relevant part; copy "find" exactly from here):
-${workingCss}`,
-    });
+Current CSS:
+${cssExcerpt}`,
+      });
 
-    const targetedEdits = targetedEditsResult.object;
+    targetedEdits = targetedEditsResult.object;
     const htmlResult = applyTargetedEdits(
       workingHtml,
       targetedEdits.htmlEdits,
@@ -202,83 +288,162 @@ ${workingCss}`,
       targetedEdits.cssEdits,
       "CSS",
     );
-    const updatedHtml = htmlResult.result;
-    const updatedCss = cssResult.result;
-
-    /** Regions for Cursor-like scroll-to-highlight in the editor. */
-    const editedRegions: Array<{
-      type: "html" | "css";
-      startIndex: number;
-      endIndex: number;
-    }> = [];
+    updatedHtml = htmlResult.result;
+    updatedCss = cssResult.result;
     if (htmlResult.firstEditRegion) {
       editedRegions.push({ type: "html", ...htmlResult.firstEditRegion });
     }
     if (cssResult.firstEditRegion) {
       editedRegions.push({ type: "css", ...cssResult.firstEditRegion });
     }
+  }
 
-    const mergedImages: Record<string, string> = {
-      ...(funnel.latest_images as Record<string, string>),
-    };
+  const mergedImages: Record<string, string> = {
+    ...(funnel.latest_images as Record<string, string>),
+  };
 
-    for (const imageEdit of editPlan.imageEdits) {
-      const { generateFunnelMedia } = await import("@/lib/generate-funnel-media");
-      const { dataUrl } = await generateFunnelMedia({
-        prompt: imageEdit.prompt,
-        preferGif: imageEdit.preferGif ?? false,
-        imageModel: gateway.image("google/imagen-4.0-fast-generate-001"),
-      });
-
-      mergedImages[imageEdit.sectionId] = dataUrl;
+  if (editPlan.imageEdits.length > 0) {
+    emit({
+      type: "step",
+      message: `Regenerating ${editPlan.imageEdits.length} image(s)...`,
+      payload: { count: editPlan.imageEdits.length },
+    });
+    const { generateFunnelMedia } = await import("@/lib/generate-funnel-media");
+    const imageModel = gateway.image("google/imagen-4.0-fast-generate-001");
+    const results = await Promise.all(
+      editPlan.imageEdits.map((imageEdit) =>
+        generateFunnelMedia({
+            prompt: imageEdit.prompt,
+            preferGif: imageEdit.preferGif ?? false,
+            imageModel,
+            videoModel: gateway.video("google/veo-3.1-fast-generate-001"),
+            sectionId: imageEdit.sectionId,
+            onVideoFallback: (sid, err) => {
+              const msg = err instanceof Error ? err.message : String(err);
+              emit({
+                type: "warning",
+                message: `Video for "${sid}" failed (using static image): ${msg.slice(0, 120)}`,
+              });
+            },
+          }).then(({ dataUrl }) => ({ sectionId: imageEdit.sectionId, dataUrl })),
+      ),
+    );
+    for (const { sectionId, dataUrl } of results) {
+      mergedImages[sectionId] = dataUrl;
     }
+  }
 
-    const { data: updatedFunnel, error: updateError } = await supabase
-      .from("funnels")
-      .update({
-        latest_html: updatedHtml,
-        latest_css: updatedCss,
-        latest_images: mergedImages,
-      })
-      .eq("id", funnel.id)
-      .select("*")
-      .single();
+  emit({ type: "status", message: "Uploading images and saving..." });
+  const storageClient = createSupabaseAdminClient() ?? supabase;
+  let imagesForDb = await uploadImagesMapToStorage(
+    mergedImages,
+    storageClient,
+    existingImages,
+  );
+  for (const k of Object.keys(mergedImages)) {
+    if (!(k in imagesForDb) && existingImages[k]) {
+      imagesForDb = { ...imagesForDb, [k]: existingImages[k] };
+    }
+  }
 
-    if (updateError || !updatedFunnel) {
+  // Client must see the new images. Start from mergedImages (has new base64), prefer imagesForDb URLs when available.
+  const imagesForClient: Record<string, string> = { ...mergedImages };
+  for (const [k, v] of Object.entries(imagesForDb)) {
+    if (v) imagesForClient[k] = v;
+  }
+
+  const { data: updatedFunnel, error: updateError } = await supabase
+    .from("funnels")
+    .update({
+      latest_html: updatedHtml,
+      latest_css: updatedCss,
+      latest_images: imagesForDb,
+    })
+    .eq("id", funnel.id)
+    .select("*")
+    .single();
+
+  if (updateError || !updatedFunnel) {
+    throw new Error(`Updating funnel failed: ${updateError?.message}`);
+  }
+
+  const { error: versionError } = await supabase
+    .from("funnel_versions")
+    .insert({
+      funnel_id: funnel.id,
+      source: "edit",
+      user_instruction: parsed.editComment,
+      html: updatedHtml,
+      css: updatedCss,
+      images: imagesForDb,
+      section_plan: {
+        editSummary: editPlan.summary,
+        targetedEdits,
+        imageEdits: editPlan.imageEdits,
+      },
+    });
+
+  if (versionError) {
+    throw new Error(`Saving version failed: ${versionError.message}`);
+  }
+
+  return {
+    success: true,
+    funnelId: funnel.id,
+    editPlan,
+    editedRegions,
+    latest_html: updatedHtml,
+    latest_css: updatedCss,
+    latest_images: imagesForClient,
+  };
+}
+
+export async function POST(request: Request) {
+  try {
+    const json = await request.json();
+    const parsed = editSchema.safeParse(json);
+
+    if (!parsed.success) {
       return NextResponse.json(
-        { error: `Updating funnel failed: ${updateError?.message}` },
-        { status: 500 },
+        { error: parsed.error.flatten() },
+        { status: 400 },
       );
     }
 
-    const { error: versionError } = await supabase
-      .from("funnel_versions")
-      .insert({
-        funnel_id: funnel.id,
-        source: "edit",
-        user_instruction: parsed.data.editComment,
-        html: updatedHtml,
-        css: updatedCss,
-        images: mergedImages,
-        section_plan: {
-          editSummary: editPlan.summary,
-          targetedEdits,
-          imageEdits: editPlan.imageEdits,
+    if (parsed.data.stream) {
+      const stream = createUIMessageStream({
+        execute: async ({ writer }) => {
+          const emit = (event: EditProgressEvent) => {
+            writer.write({
+              type: "data-edit-event",
+              data: event,
+              transient: true,
+            });
+          };
+
+          try {
+            emit({ type: "status", message: "Edit started." });
+            const result = await runEdit(parsed.data, emit);
+            writer.write({
+              type: "data-edit-result",
+              data: result,
+              transient: true,
+            });
+            emit({ type: "done", message: "Edit completed." });
+          } catch (error) {
+            emit({
+              type: "error",
+              message: error instanceof Error ? error.message : "Unknown server error",
+            });
+          }
         },
       });
 
-    if (versionError) {
-      return NextResponse.json(
-        { error: `Saving version failed: ${versionError.message}` },
-        { status: 500 },
-      );
+      return createUIMessageStreamResponse({ stream });
     }
 
-    return NextResponse.json({
-      funnel: updatedFunnel,
-      editPlan,
-      editedRegions,
-    });
+    const result = await runEdit(parsed.data, () => {});
+    return NextResponse.json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown server error";
     return NextResponse.json({ error: message }, { status: 500 });

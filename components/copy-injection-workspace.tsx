@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { renderPreviewDocument } from "@/lib/copy-injection";
 import { readUiMessageSseStream, UiStreamChunk } from "@/lib/read-ui-stream";
 import {
+  FunnelListItem,
   FunnelRecord,
   FunnelVersionRecord,
   TemplateRecord,
@@ -41,7 +42,8 @@ function previewSrcDoc(
 
 export function CopyInjectionWorkspace() {
   const [templates, setTemplates] = useState<TemplateRecord[]>([]);
-  const [funnels, setFunnels] = useState<FunnelRecord[]>([]);
+  const [funnels, setFunnels] = useState<FunnelListItem[]>([]);
+  const [fullFunnel, setFullFunnel] = useState<FunnelRecord | null>(null);
   const [versions, setVersions] = useState<FunnelVersionRecord[]>([]);
   const [selectedFunnelId, setSelectedFunnelId] = useState<string>("");
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>("");
@@ -63,20 +65,17 @@ export function CopyInjectionWorkspace() {
   const [isTraining, setIsTraining] = useState(false);
   const [generationTrace, setGenerationTrace] = useState<string[]>([]);
 
-  const currentFunnel = useMemo(
-    () => funnels.find((funnel) => funnel.id === selectedFunnelId) ?? null,
-    [funnels, selectedFunnelId],
-  );
+  const currentFunnel = fullFunnel;
 
   useEffect(() => {
     void Promise.all([
       fetch("/api/agents/copy-injection/templates")
         .then((res) => res.json())
         .then((data) => setTemplates(data.templates ?? [])),
-      fetch("/api/agents/copy-injection/funnels")
+      fetch("/api/agents/copy-injection/funnels?list=true")
         .then((res) => res.json())
         .then((data) => {
-          const loadedFunnels: FunnelRecord[] = data.funnels ?? [];
+          const loadedFunnels: FunnelListItem[] = data.funnels ?? [];
           setFunnels(loadedFunnels);
           if (loadedFunnels.length > 0) {
             setSelectedFunnelId(loadedFunnels[0].id);
@@ -90,8 +89,17 @@ export function CopyInjectionWorkspace() {
   useEffect(() => {
     if (!selectedFunnelId) {
       setVersions([]);
+      setFullFunnel(null);
       return;
     }
+
+    fetch(`/api/agents/copy-injection/funnels/${selectedFunnelId}`)
+      .then((res) => res.json())
+      .then((data) => {
+        const funnel = data.funnel as FunnelRecord | undefined;
+        if (funnel) setFullFunnel(funnel);
+      })
+      .catch(() => setFullFunnel(null));
 
     fetch(`/api/agents/copy-injection/funnels/${selectedFunnelId}/versions`)
       .then((res) => res.json())
@@ -126,7 +134,20 @@ export function CopyInjectionWorkspace() {
         }
 
         const createdFunnel: FunnelRecord = data.funnel;
-        setFunnels((previous) => [createdFunnel, ...previous]);
+        setFullFunnel(createdFunnel);
+        setFunnels((previous) => {
+          if (previous.some((f) => f.id === createdFunnel.id)) return previous;
+          const item: FunnelListItem = {
+            id: createdFunnel.id,
+            name: createdFunnel.name,
+            objective: createdFunnel.objective,
+            template_id: createdFunnel.template_id,
+            agent_slug: "copy-injection",
+            created_at: createdFunnel.created_at,
+            updated_at: createdFunnel.updated_at,
+          };
+          return [item, ...previous];
+        });
         setSelectedFunnelId(createdFunnel.id);
         setEditComment("");
         setStatus("Funnel generated successfully.");
@@ -171,7 +192,20 @@ export function CopyInjectionWorkspace() {
       }
 
       const createdFunnel: FunnelRecord = (finalData as GenerationResult).funnel;
-      setFunnels((previous) => [createdFunnel, ...previous]);
+      setFullFunnel(createdFunnel);
+      setFunnels((previous) => {
+        if (previous.some((f) => f.id === createdFunnel.id)) return previous;
+        const item: FunnelListItem = {
+          id: createdFunnel.id,
+          name: createdFunnel.name,
+          objective: createdFunnel.objective,
+          template_id: createdFunnel.template_id,
+          agent_slug: "copy-injection",
+          created_at: createdFunnel.created_at,
+          updated_at: createdFunnel.updated_at,
+        };
+        return [item, ...previous];
+      });
       setSelectedFunnelId(createdFunnel.id);
       setEditComment("");
     } catch (error) {
@@ -192,7 +226,7 @@ export function CopyInjectionWorkspace() {
     }
 
     setIsEditing(true);
-    setStatus("Applying targeted edit to HTML/CSS and related images...");
+    setStatus("Applying AI edit (this may take a minute for image changes)...");
     try {
       const response = await fetch("/api/agents/copy-injection/edit", {
         method: "POST",
@@ -205,17 +239,23 @@ export function CopyInjectionWorkspace() {
         }),
       });
 
-      const data = await response.json();
+      let data: { error?: string; success?: boolean; funnelId?: string; editPlan?: { summary?: string } };
+      try {
+        data = await response.json();
+      } catch {
+        throw new Error(response.ok ? "Invalid response" : "Edit failed.");
+      }
       if (!response.ok) {
         throw new Error(data.error ?? "Edit failed.");
       }
 
-      const updatedFunnel: FunnelRecord = data.funnel;
-      setFunnels((previous) =>
-        previous.map((funnel) =>
-          funnel.id === updatedFunnel.id ? updatedFunnel : funnel,
-        ),
+      setStatus("Edit applied. Loading updated funnel...");
+      const funnelRes = await fetch(
+        `/api/agents/copy-injection/funnels/${data.funnelId ?? selectedFunnelId}`,
       );
+      const funnelData = await funnelRes.json();
+      const updatedFunnel = funnelData.funnel as FunnelRecord | undefined;
+      if (updatedFunnel) setFullFunnel(updatedFunnel);
 
       const versionResponse = await fetch(
         `/api/agents/copy-injection/funnels/${selectedFunnelId}/versions`,

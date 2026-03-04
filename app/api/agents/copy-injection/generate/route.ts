@@ -17,8 +17,14 @@ import {
   FUNNEL_GENERATION_EXTRA_SYSTEM_PROMPT,
 } from "@/lib/agent1-guidelines";
 import { IMAGE_GENERATION_GUIDELINE } from "@/lib/image-generation-guideline";
+import { uploadImagesMapToStorage } from "@/lib/funnel-image-storage";
 import { getGateway } from "@/lib/ai-gateway";
-import { createServerSupabaseClient } from "@/utils/supabase/server";
+import {
+  createServerSupabaseClient,
+  createSupabaseAdminClient,
+} from "@/utils/supabase/server";
+
+export const maxDuration = 3000;
 
 const generateSchema = z.object({
   funnelName: z.string().min(3),
@@ -138,9 +144,11 @@ For each section include:
 - content
 - ctaLabel (string when relevant, otherwise null)
 - imagePrompt: A concrete 1-2 sentence visual description for this section's image. MUST directly illustrate this section's content. Follow advertorial rules: editorial, candid, no text/logos. Headline images create curiosity without revealing the solution. Body images explain the single core idea. Be specific to the copy.
-- preferGif: Set true when the image guideline requires animation. Use GIF when: (a) HEADLINE implies process, transformation, hidden cause, or change over time; (b) BODY explains mechanism, digestion, absorption, delivery path, or cause-and-effect over time; (c) PRODUCT section shows mechanism/delivery. Use false for static moments, conditions, comparisons, simple "this is happening" scenes.
+- preferGif: CRITICAL for advertorial credibility. Set TRUE when: (a) HEADLINE implies process, transformation, hidden cause, before/after, or change over time; (b) BODY explains mechanism, digestion, absorption, delivery path, how-it-works, or cause-and-effect; (c) PRODUCT/mechanism section shows delivery or absorption. DEFAULT to true for body and product sections—most supplement/health/transformation copy benefits from motion. Set FALSE only for: static testimonials, FAQs, simple hero hooks with no process implied, pure comparison tables.
 
-Important: every section object MUST include ctaLabel, imagePrompt, and preferGif. imagePrompt must be content-specific, not generic.`,
+Examples: body explaining "how it enters the bloodstream" → preferGif: true; body explaining "digestion over 24 hours" → preferGif: true; headline "Scientists discover what happens inside your gut" → preferGif: true; testimonial quote with photo → preferGif: false; FAQ "How do I take it?" → preferGif: false.
+
+Important: every section object MUST include ctaLabel, imagePrompt, and preferGif. imagePrompt must be content-specific, not generic. When in doubt, prefer true for body/product sections.`,
   });
 
   const sectionPlan = sectionPlanResult.object;
@@ -257,6 +265,15 @@ ${template?.css_scaffold ?? "N/A"}`;
       prompt: visualDescription,
       preferGif: section.preferGif ?? false,
       imageModel: gateway.image("google/imagen-4.0-fast-generate-001"),
+      videoModel: gateway.video("google/veo-3.1-fast-generate-001"),
+      sectionId: section.id,
+      onVideoFallback: (sid, err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        emit({
+          type: "warning",
+          message: `Video for "${sid}" failed (using static image): ${msg.slice(0, 120)}`,
+        });
+      },
     });
 
     generatedImages[section.id] = dataUrl;
@@ -264,8 +281,11 @@ ${template?.css_scaffold ?? "N/A"}`;
 
   emit({
     type: "status",
-    message: "Saving funnel and version history.",
+    message: "Uploading images and saving funnel.",
   });
+  const storageClient = createSupabaseAdminClient() ?? supabase;
+  const imagesForDb = await uploadImagesMapToStorage(generatedImages, storageClient);
+
   const { data: funnel, error: funnelError } = await supabase
     .from("funnels")
     .insert({
@@ -275,7 +295,7 @@ ${template?.css_scaffold ?? "N/A"}`;
       template_id: parsedData.templateId ?? null,
       latest_html: html,
       latest_css: css,
-      latest_images: generatedImages,
+      latest_images: imagesForDb,
     })
     .select("*")
     .single();
@@ -292,7 +312,7 @@ ${template?.css_scaffold ?? "N/A"}`;
       user_instruction: parsedData.objective,
       html,
       css,
-      images: generatedImages,
+      images: imagesForDb,
       section_plan: sectionPlan,
     });
 
@@ -301,11 +321,11 @@ ${template?.css_scaffold ?? "N/A"}`;
   }
 
   return {
-    funnel,
+    funnel: { ...funnel, latest_images: imagesForDb },
     generated: {
       html,
       css,
-      images: generatedImages,
+      images: imagesForDb,
       sectionPlan,
     },
   };

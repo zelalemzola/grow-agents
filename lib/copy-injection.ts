@@ -35,6 +35,8 @@ export const htmlCssSchema = z.object({
 
 export const editPlanSchema = z.object({
   summary: z.string(),
+  /** When false, skip the targeted-edits LLM call and use current html/css as-is. Saves ~8-15s for image-only requests. */
+  htmlCssChangesNeeded: z.boolean(),
   imageEdits: z.array(
     z.object({
       sectionId: z.string(),

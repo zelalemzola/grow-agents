@@ -1,7 +1,8 @@
+import { createClient } from "@supabase/supabase-js";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 
-import { getSupabaseConfig } from "@/lib/supabase-config";
+import { getSupabaseConfig, getSupabaseServiceRoleKey } from "@/lib/supabase-config";
 
 export async function createServerSupabaseClient() {
   const cookieStore = await cookies();
@@ -23,4 +24,12 @@ export async function createServerSupabaseClient() {
       },
     },
   });
+}
+
+/** Admin client with service role - use for Storage uploads that need to bypass RLS. */
+export function createSupabaseAdminClient() {
+  const { url } = getSupabaseConfig();
+  const serviceKey = getSupabaseServiceRoleKey();
+  if (!serviceKey) return null;
+  return createClient(url, serviceKey);
 }

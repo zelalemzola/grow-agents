@@ -25,12 +25,24 @@ export interface TemplateRecord {
 
 export interface FunnelRecord {
   id: string;
+  agent_slug?: string;
   name: string;
   objective: string;
   template_id: string | null;
   latest_html: string;
   latest_css: string;
   latest_images: Record<string, string>;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Lightweight funnel for list views - excludes large fields (html, css, images) */
+export interface FunnelListItem {
+  id: string;
+  name: string;
+  objective: string;
+  template_id: string | null;
+  agent_slug: string;
   created_at: string;
   updated_at: string;
 }

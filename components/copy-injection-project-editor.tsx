@@ -20,13 +20,16 @@ import {
   Loader2,
   CheckCircle2,
   Zap,
+  Copy,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { renderPreviewDocument } from "@/lib/copy-injection";
 import { createPreviewSrcDoc, injectImagesIntoHtml } from "@/lib/funnel-preview";
 import { readUiMessageSseStream, UiStreamChunk } from "@/lib/read-ui-stream";
 import {
+  FunnelListItem,
   FunnelRecord,
   FunnelVersionRecord,
   TemplateRecord,
@@ -53,7 +56,8 @@ export function CopyInjectionProjectEditor({
   initialProjectId?: string;
 }) {
   const [templates, setTemplates] = useState<TemplateRecord[]>([]);
-  const [projects, setProjects] = useState<FunnelRecord[]>([]);
+  const [projects, setProjects] = useState<FunnelListItem[]>([]);
+  const [fullProject, setFullProject] = useState<FunnelRecord | null>(null);
   const [versions, setVersions] = useState<FunnelVersionRecord[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const [selectedProjectId, setSelectedProjectId] = useState(initialProjectId ?? "");
@@ -75,6 +79,8 @@ export function CopyInjectionProjectEditor({
   const [isSavingManual, setIsSavingManual] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
   const [generationTrace, setGenerationTrace] = useState<string[]>([]);
+  const [editTrace, setEditTrace] = useState<string[]>([]);
+  const [previewKey, setPreviewKey] = useState(0);
 
   const htmlTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const cssTextareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -94,10 +100,10 @@ export function CopyInjectionProjectEditor({
       fetch("/api/agents/copy-injection/templates")
         .then((res) => res.json())
         .then((data) => setTemplates((data.templates ?? []) as TemplateRecord[])),
-      fetch("/api/agents/copy-injection/funnels")
+      fetch("/api/agents/copy-injection/funnels?list=true")
         .then((res) => res.json())
         .then((data) => {
-          const loaded = (data.funnels ?? []) as FunnelRecord[];
+          const loaded = (data.funnels ?? []) as FunnelListItem[];
           setProjects(loaded);
 
           if (!selectedProjectId && loaded.length > 0) {
@@ -115,8 +121,28 @@ export function CopyInjectionProjectEditor({
   useEffect(() => {
     if (!selectedProjectId) {
       setVersions([]);
+      setFullProject(null);
       return;
     }
+
+    setStatus("Loading project...");
+    fetch(`/api/agents/copy-injection/funnels/${selectedProjectId}`, {
+      cache: "no-store",
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        const funnel = data.funnel as FunnelRecord | undefined;
+        if (funnel) {
+          setFullProject(funnel);
+          setHtmlDraft(funnel.latest_html ?? "");
+          setCssDraft(funnel.latest_css ?? "");
+          setImagesDraft((funnel.latest_images ?? {}) as Record<string, string>);
+          setPreviewKey((k) => k + 1);
+        }
+      })
+      .catch((error) => {
+        setStatus(`Failed to load project: ${String(error)}`);
+      });
 
     fetch(`/api/agents/copy-injection/funnels/${selectedProjectId}/versions`)
       .then((res) => res.json())
@@ -129,14 +155,9 @@ export function CopyInjectionProjectEditor({
   }, [selectedProjectId]);
 
   useEffect(() => {
-    if (!currentProject) {
-      return;
-    }
-
-    setHtmlDraft(currentProject.latest_html);
-    setCssDraft(currentProject.latest_css);
-    setImagesDraft((currentProject.latest_images ?? {}) as Record<string, string>);
-  }, [currentProject]);
+    if (!fullProject) return;
+    setStatus("Ready.");
+  }, [fullProject]);
 
   useEffect(() => {
     const pending = pendingHighlightRef.current;
@@ -169,9 +190,9 @@ export function CopyInjectionProjectEditor({
   }, [activeCodeTab, htmlDraft, cssDraft]);
 
   const refreshProjects = async (keepProjectId?: string) => {
-    const response = await fetch("/api/agents/copy-injection/funnels");
+    const response = await fetch("/api/agents/copy-injection/funnels?list=true");
     const data = await response.json();
-    const loaded = (data.funnels ?? []) as FunnelRecord[];
+    const loaded = (data.funnels ?? []) as FunnelListItem[];
     setProjects(loaded);
 
     if (keepProjectId && loaded.some((project) => project.id === keepProjectId)) {
@@ -189,6 +210,7 @@ export function CopyInjectionProjectEditor({
     setIsGenerating(true);
     setStatus("Generating new project...");
     setGenerationTrace([]);
+    setEditTrace([]);
     setHtmlDraft("");
     setCssDraft("");
     setImagesDraft({});
@@ -219,17 +241,28 @@ export function CopyInjectionProjectEditor({
         await refreshProjects(project.id);
         await refreshVersions(project.id);
         setSelectedProjectId(project.id);
+        setFullProject(project);
         setProjects((prev) => {
           const exists = prev.some((p) => p.id === project.id);
-          if (exists) return prev.map((p) => (p.id === project.id ? project : p));
-          return [project, ...prev];
+          if (exists) return prev;
+          const item: FunnelListItem = {
+            id: project.id,
+            name: project.name,
+            objective: project.objective,
+            template_id: project.template_id,
+            agent_slug: project.agent_slug ?? "copy-injection",
+            created_at: project.created_at,
+            updated_at: project.updated_at,
+          };
+          return [item, ...prev];
         });
-        setHtmlDraft(project.latest_html ?? "");
-        setCssDraft(project.latest_css ?? "");
-        setImagesDraft((project.latest_images ?? {}) as Record<string, string>);
-        setEditComment("");
-        setStatus("Project generated successfully.");
-        return;
+      setHtmlDraft(project.latest_html ?? "");
+      setCssDraft(project.latest_css ?? "");
+      setImagesDraft((project.latest_images ?? {}) as Record<string, string>);
+      setPreviewKey((k) => k + 1);
+      setEditComment("");
+      setStatus("Project generated successfully.");
+      return;
       }
 
       type GenerationResult = { funnel: FunnelRecord };
@@ -283,14 +316,24 @@ export function CopyInjectionProjectEditor({
       await refreshProjects(project.id);
       await refreshVersions(project.id);
       setSelectedProjectId(project.id);
+      setFullProject(project);
       setProjects((prev) => {
-        const exists = prev.some((p) => p.id === project.id);
-        if (exists) return prev.map((p) => (p.id === project.id ? project : p));
-        return [project, ...prev];
+        if (prev.some((p) => p.id === project.id)) return prev;
+        const item: FunnelListItem = {
+          id: project.id,
+          name: project.name,
+          objective: project.objective,
+          template_id: project.template_id,
+          agent_slug: project.agent_slug ?? "copy-injection",
+          created_at: project.created_at,
+          updated_at: project.updated_at,
+        };
+        return [item, ...prev];
       });
       setHtmlDraft(project.latest_html ?? "");
       setCssDraft(project.latest_css ?? "");
       setImagesDraft((project.latest_images ?? {}) as Record<string, string>);
+      setPreviewKey((k) => k + 1);
       setEditComment("");
     } catch (error) {
       setStatus(`Generation failed: ${String(error)}`);
@@ -306,7 +349,8 @@ export function CopyInjectionProjectEditor({
     }
 
     setIsAiEditing(true);
-    setStatus("Applying targeted AI edit...");
+    setEditTrace([]);
+    setStatus("Applying AI edit...");
 
     try {
       const response = await fetch("/api/agents/copy-injection/edit", {
@@ -319,32 +363,150 @@ export function CopyInjectionProjectEditor({
           editComment,
           currentHtml: htmlDraft || undefined,
           currentCss: cssDraft || undefined,
+          stream: true,
         }),
       });
 
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error ?? "AI edit failed.");
+      const contentType = response.headers.get("content-type") ?? "";
+      if (contentType.includes("text/event-stream")) {
+        type EditResult = {
+          success?: boolean;
+          funnelId?: string;
+          editedRegions?: Array<{ type: "html" | "css"; startIndex: number; endIndex: number }>;
+          latest_html?: string;
+          latest_css?: string;
+          latest_images?: Record<string, string>;
+        };
+        let finalData: EditResult | null = null;
+        let streamError: string | null = null;
+
+        await readUiMessageSseStream(response, (chunk: UiStreamChunk) => {
+          if (chunk.type === "data-edit-event") {
+            const event = chunk.data as { type?: string; message?: string };
+            if (event?.type === "error") {
+              streamError = event.message ?? "Unknown error";
+              setStatus(`Edit failed: ${streamError}`);
+              return;
+            }
+            if (event?.message) {
+              setEditTrace((prev) => [
+                ...prev,
+                `${(event.type ?? "status").toUpperCase()}: ${event.message}`,
+              ]);
+              setStatus(event.message);
+            }
+          }
+          if (chunk.type === "data-edit-result" && chunk.data) {
+            finalData = chunk.data as EditResult;
+            setStatus("Edit applied.");
+          }
+        });
+
+        if (streamError) {
+          throw new Error(streamError);
+        }
+
+        const result = finalData as EditResult | null;
+        if (!result) {
+          throw new Error("Edit stream ended without result.");
+        }
+
+        const editedRegions = result.editedRegions;
+        if (editedRegions?.length) {
+          const first = editedRegions[0];
+          setActiveCodeTab(first.type);
+          pendingHighlightRef.current = first;
+        }
+
+        if (result.latest_html !== undefined) setHtmlDraft(result.latest_html);
+        if (result.latest_css !== undefined) setCssDraft(result.latest_css);
+        if (result.latest_images !== undefined) setImagesDraft(result.latest_images);
+        setPreviewKey((k) => k + 1);
+
+        const hasContent =
+          result.latest_html !== undefined ||
+          result.latest_css !== undefined ||
+          result.latest_images !== undefined;
+        if (!hasContent && (result.funnelId ?? selectedProjectId)) {
+          const fallbackRes = await fetch(
+            `/api/agents/copy-injection/funnels/${result.funnelId ?? selectedProjectId}?t=${Date.now()}`,
+          );
+          const fallbackData = await fallbackRes.json();
+          const updated = fallbackData.funnel as FunnelRecord | undefined;
+          if (updated) {
+            setHtmlDraft(updated.latest_html ?? "");
+            setCssDraft(updated.latest_css ?? "");
+            setImagesDraft((updated.latest_images ?? {}) as Record<string, string>);
+            setFullProject(updated);
+            setPreviewKey((k) => k + 1);
+          }
+        }
+
+        setFullProject((prev) =>
+          prev && result.funnelId
+            ? {
+                ...prev,
+                latest_html: result.latest_html ?? prev.latest_html,
+                latest_css: result.latest_css ?? prev.latest_css,
+                latest_images: result.latest_images ?? prev.latest_images,
+              }
+            : prev,
+        );
+
+        await refreshProjects(result.funnelId ?? selectedProjectId);
+        await refreshVersions(result.funnelId ?? selectedProjectId);
+      } else {
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data?.error ?? "AI edit failed.");
+        }
+
+        const editedRegions = data.editedRegions;
+        if (editedRegions?.length) {
+          const first = editedRegions[0];
+          setActiveCodeTab(first.type);
+          pendingHighlightRef.current = first;
+        }
+
+        if (data.latest_html !== undefined) setHtmlDraft(data.latest_html);
+        if (data.latest_css !== undefined) setCssDraft(data.latest_css);
+        if (data.latest_images !== undefined) setImagesDraft(data.latest_images);
+        setPreviewKey((k) => k + 1);
+
+        const hasContent =
+          data.latest_html !== undefined ||
+          data.latest_css !== undefined ||
+          data.latest_images !== undefined;
+        if (!hasContent && (data.funnelId ?? selectedProjectId)) {
+          const fallbackRes = await fetch(
+            `/api/agents/copy-injection/funnels/${data.funnelId ?? selectedProjectId}?t=${Date.now()}`,
+          );
+          const fallbackData = await fallbackRes.json();
+          const updated = fallbackData.funnel as FunnelRecord | undefined;
+          if (updated) {
+            setHtmlDraft(updated.latest_html ?? "");
+            setCssDraft(updated.latest_css ?? "");
+            setImagesDraft((updated.latest_images ?? {}) as Record<string, string>);
+            setFullProject(updated);
+            setPreviewKey((k) => k + 1);
+          }
+        }
+
+        setFullProject((prev) =>
+          prev
+            ? {
+                ...prev,
+                latest_html: data.latest_html ?? prev.latest_html,
+                latest_css: data.latest_css ?? prev.latest_css,
+                latest_images: data.latest_images ?? prev.latest_images,
+              }
+            : prev,
+        );
+
+        await refreshProjects(data.funnelId ?? selectedProjectId);
+        await refreshVersions(data.funnelId ?? selectedProjectId);
+        setStatus("AI edit applied.");
       }
-
-      const updated = data.funnel as FunnelRecord;
-      const editedRegions = data.editedRegions as
-        | Array<{ type: "html" | "css"; startIndex: number; endIndex: number }>
-        | undefined;
-
-      setHtmlDraft(updated.latest_html ?? "");
-      setCssDraft(updated.latest_css ?? "");
-      setImagesDraft((updated.latest_images ?? {}) as Record<string, string>);
-
-      if (editedRegions?.length) {
-        const first = editedRegions[0];
-        setActiveCodeTab(first.type);
-        pendingHighlightRef.current = first;
-      }
-
-      await refreshProjects(updated.id);
-      await refreshVersions(updated.id);
-      setStatus("AI edit applied.");
     } catch (error) {
       setStatus(`AI edit failed: ${String(error)}`);
     } finally {
@@ -363,7 +525,7 @@ export function CopyInjectionProjectEditor({
     }
 
     setIsSavingManual(true);
-    setStatus("Saving manual code edits...");
+    setStatus("Saving project...");
 
     try {
       const response = await fetch(
@@ -381,16 +543,27 @@ export function CopyInjectionProjectEditor({
         },
       );
 
-      const data = await response.json();
+      let data: { error?: string; funnel?: FunnelRecord };
+      try {
+        data = await response.json();
+      } catch {
+        throw new Error(response.ok ? "Invalid response" : "Save failed.");
+      }
       if (!response.ok) {
-        throw new Error(data.error ?? "Manual save failed.");
+        throw new Error(data?.error ?? "Save failed.");
       }
 
-      await refreshProjects(selectedProjectId);
+      const updatedFunnel = data.funnel as FunnelRecord;
+      setFullProject(updatedFunnel);
+      setHtmlDraft(updatedFunnel.latest_html ?? "");
+      setCssDraft(updatedFunnel.latest_css ?? "");
+      setImagesDraft((updatedFunnel.latest_images ?? {}) as Record<string, string>);
+      setPreviewKey((k) => k + 1);
       await refreshVersions(selectedProjectId);
-      setStatus("Manual code edit saved as a new version.");
+      setManualSaveNote("");
+      setStatus("Project saved. New version created.");
     } catch (error) {
-      setStatus(`Manual save failed: ${String(error)}`);
+      setStatus(`Save failed: ${String(error)}`);
     } finally {
       setIsSavingManual(false);
     }
@@ -402,7 +575,7 @@ export function CopyInjectionProjectEditor({
     }
 
     setIsRestoring(true);
-    setStatus("Restoring selected version...");
+    setStatus("Restoring version...");
 
     try {
       const response = await fetch(
@@ -421,9 +594,16 @@ export function CopyInjectionProjectEditor({
         throw new Error(data.error ?? "Restore failed.");
       }
 
-      await refreshProjects(selectedProjectId);
+      const restoredFunnel = data.funnel as FunnelRecord;
+      setFullProject(restoredFunnel);
+      setHtmlDraft(restoredFunnel.latest_html ?? "");
+      setCssDraft(restoredFunnel.latest_css ?? "");
+      setImagesDraft(
+        (restoredFunnel.latest_images ?? {}) as Record<string, string>,
+      );
+      setPreviewKey((k) => k + 1);
       await refreshVersions(selectedProjectId);
-      setStatus("Version restored. You can continue editing from this point.");
+      setStatus("Version restored. You can continue editing.");
     } catch (error) {
       setStatus(`Restore failed: ${String(error)}`);
     } finally {
@@ -439,17 +619,7 @@ export function CopyInjectionProjectEditor({
 
     const zip = new JSZip();
     const htmlWithImages = injectImagesIntoHtml(htmlDraft, imagesDraft);
-    const standaloneHtml = `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="stylesheet" href="./styles.css" />
-  </head>
-  <body>
-${htmlWithImages}
-  </body>
-</html>`;
+    const standaloneHtml = renderPreviewDocument(htmlWithImages, cssDraft);
 
     zip.file("index.html", standaloneHtml);
     zip.file("styles.css", cssDraft);
@@ -464,6 +634,36 @@ ${htmlWithImages}
     anchor.remove();
     URL.revokeObjectURL(url);
     setStatus("Downloaded ZIP with index.html and styles.css.");
+  };
+
+  const handleCopyExportReady = async () => {
+    const htmlWithImages = injectImagesIntoHtml(htmlDraft, imagesDraft);
+    const fullPage = renderPreviewDocument(htmlWithImages, cssDraft);
+    try {
+      await navigator.clipboard.writeText(fullPage);
+      setStatus("Copied full page to clipboard.");
+    } catch {
+      setStatus("Copy failed.");
+    }
+  };
+
+  const handleCopyHtml = async () => {
+    const htmlWithImages = injectImagesIntoHtml(htmlDraft, imagesDraft);
+    try {
+      await navigator.clipboard.writeText(htmlWithImages);
+      setStatus("Copied HTML (with image URLs) to clipboard.");
+    } catch {
+      setStatus("Copy failed.");
+    }
+  };
+
+  const handleCopyCss = async () => {
+    try {
+      await navigator.clipboard.writeText(cssDraft);
+      setStatus("Copied CSS to clipboard.");
+    } catch {
+      setStatus("Copy failed.");
+    }
   };
 
   const preview = createPreviewSrcDoc(htmlDraft, cssDraft, imagesDraft);
@@ -481,7 +681,7 @@ ${htmlWithImages}
               <div>
                 <h1 className="font-semibold tracking-tight">Project Builder</h1>
                 <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  {isGenerating ? (
+                  {isGenerating || isAiEditing ? (
                     <>
                       <Loader2 className="size-3.5 animate-spin" />
                       {status}
@@ -589,15 +789,26 @@ ${htmlWithImages}
 
         {/* AI Edit */}
         <div className="border-b border-border/60 px-5 py-4">
-          <h2 className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-            <Bot className="size-4" />
-            AI Edit + Version Control
-          </h2>
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+              <Bot className="size-4" />
+              AI Edit + Version Control
+            </h2>
+            <Link
+              href="/agents/copy-injection/projects"
+              className="text-xs text-muted-foreground hover:text-foreground"
+            >
+              View all projects
+            </Link>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Select a project above, describe your edit, then click Apply. Changes update the code panels and Live Preview.
+          </p>
           <textarea
             className="mt-3 min-h-20 w-full rounded-lg border border-input bg-background px-3 py-2.5 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
             value={editComment}
             onChange={(event) => setEditComment(event.target.value)}
-            placeholder="Tell AI exactly what to edit. Example: only rewrite hero headline and subheadline."
+            placeholder="Examples: Change the third image from female to an old man | Make the hero headline more urgent | Swap the CTA button text to Get Started"
           />
           <div className="mt-3 flex flex-wrap gap-2">
             <Button
@@ -614,6 +825,36 @@ ${htmlWithImages}
             </Button>
             <Button
               variant="outline"
+              size="sm"
+              onClick={handleCopyHtml}
+              disabled={!selectedProjectId || !htmlDraft.trim()}
+              className="gap-1.5"
+            >
+              <Copy className="size-3.5" />
+              Copy HTML
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleCopyCss}
+              disabled={!selectedProjectId || !cssDraft.trim()}
+              className="gap-1.5"
+            >
+              <Copy className="size-3.5" />
+              Copy CSS
+            </Button>
+            {/* <Button
+              variant="outline"
+              size="sm"
+              onClick={handleCopyExportReady}
+              disabled={!selectedProjectId || !htmlDraft.trim()}
+              className="gap-1.5"
+            >
+              <Copy className="size-3.5" />
+              Copy full page
+            </Button> */}
+            <Button
+              variant="outline"
               onClick={handleDownloadZip}
               disabled={!selectedProjectId}
               className="gap-2"
@@ -622,6 +863,20 @@ ${htmlWithImages}
               Download ZIP
             </Button>
           </div>
+          <p className="mt-1.5 text-xs text-muted-foreground">
+            Copy HTML / Copy CSS use real image URLs. Copy full page = standalone document.
+          </p>
+          {editTrace.length > 0 ? (
+            <div className="mt-3 max-h-36 overflow-auto rounded-lg border border-border/60 bg-muted/20 p-3 text-xs text-muted-foreground">
+              <p className="mb-1.5 font-medium text-foreground/80">Edit trace</p>
+              {editTrace.map((line, index) => (
+                <p key={`${line}-${index}`} className="flex items-center gap-2 py-0.5">
+                  <span className="size-1.5 shrink-0 rounded-full bg-primary/50" />
+                  {line}
+                </p>
+              ))}
+            </div>
+          ) : null}
         </div>
 
         {/* Code Editor */}
@@ -666,7 +921,7 @@ ${htmlWithImages}
                 ) : (
                   <Save className="size-4" />
                 )}
-                {isSavingManual ? "Saving..." : "Save Version"}
+                {isSavingManual ? "Saving..." : "Save Project"}
               </Button>
             </div>
 
@@ -739,6 +994,7 @@ ${htmlWithImages}
         </div>
         <div className="p-3">
           <iframe
+            key={previewKey}
             title="live-funnel-preview"
             className="h-[82vh] w-full rounded-lg border border-border/60 bg-white shadow-inner dark:bg-zinc-900"
             sandbox="allow-same-origin"

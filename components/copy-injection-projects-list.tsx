@@ -11,19 +11,19 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { FunnelRecord } from "@/lib/types";
+import { FunnelListItem } from "@/lib/types";
 
 export function CopyInjectionProjectsList() {
-  const [funnels, setFunnels] = useState<FunnelRecord[]>([]);
+  const [funnels, setFunnels] = useState<FunnelListItem[]>([]);
   const [status, setStatus] = useState("Loading projects...");
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     setIsLoading(true);
-    fetch("/api/agents/copy-injection/funnels")
+    fetch("/api/agents/copy-injection/funnels?list=true")
       .then((res) => res.json())
       .then((data) => {
-        const loaded = (data.funnels ?? []) as FunnelRecord[];
+        const loaded = (data.funnels ?? []) as FunnelListItem[];
         setFunnels(loaded);
         setStatus(
           loaded.length > 0
