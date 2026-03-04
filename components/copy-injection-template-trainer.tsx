@@ -204,7 +204,7 @@ export function CopyInjectionTemplateTrainer() {
               placeholder="Rules, tone, section order, banned claims..."
             />
           </div>
-          <div>
+          {/* <div>
             <label className="mb-1.5 block text-sm font-medium">
               Upload files
             </label>
@@ -221,7 +221,7 @@ export function CopyInjectionTemplateTrainer() {
                 className="hidden"
               />
             </label>
-          </div>
+          </div> */}
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
               <label className="mb-1.5 flex items-center gap-2 text-sm font-medium">
