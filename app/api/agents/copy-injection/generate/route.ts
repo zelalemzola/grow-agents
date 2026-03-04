@@ -163,9 +163,24 @@ Important: every section object MUST include ctaLabel, imagePrompt, and preferGi
     },
   });
 
+  const imageCandidates = sectionPlan.sections
+    .filter((section) => Boolean(section.title || section.content))
+    .slice(0, 6);
+
+  const funnelContext = {
+    objective: parsedData.objective,
+    pageName: sectionPlan.pageName,
+    sectionSummaries: sectionPlan.sections.map((s) => ({
+      id: s.id,
+      title: s.title,
+      contentPreview: s.content.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 120),
+    })),
+  };
+
   emit({
     type: "status",
-    message: "Building HTML/CSS layout from section plan.",
+    message: "Building HTML/CSS and generating images in parallel.",
+    payload: { imageCandidates: imageCandidates.length },
   });
 
   const htmlCssPrompt = `${copyContext}
@@ -213,48 +228,22 @@ ${template?.css_scaffold ?? "N/A"}`;
     prompt: htmlCssPrompt,
   });
 
-  for await (const partial of partialObjectStream) {
-    if (typeof partial.html === "string" && partial.html.length > 0) {
-      emit({ type: "html-stream", payload: { value: partial.html } });
-    }
-    if (typeof partial.css === "string" && partial.css.length > 0) {
-      emit({ type: "css-stream", payload: { value: partial.css } });
-    }
-  }
+  const { generateFunnelMedia } = await import("@/lib/generate-funnel-media");
+  const { getImageModel } = await import("@/lib/image-model");
+  const { getVideoModel } = await import("@/lib/video-model");
+  const imageModel = getImageModel();
+  const videoModel = getVideoModel();
 
-  const htmlCssResult = await htmlCssObject;
-  const html = htmlCssResult.html;
-  const css = htmlCssResult.css;
+  const IMAGE_CONCURRENCY = 1;
 
-  const imageCandidates = sectionPlan.sections
-    .filter((section) => Boolean(section.title || section.content))
-    .slice(0, 6);
-
-  emit({
-    type: "step",
-    message: "Preparing image generation.",
-    payload: { imageCandidates: imageCandidates.length },
-  });
-
-  const generatedImages: Record<string, string> = {};
-
-  const funnelContext = {
-    objective: parsedData.objective,
-    pageName: sectionPlan.pageName,
-    sectionSummaries: sectionPlan.sections.map((s) => ({
-      id: s.id,
-      title: s.title,
-      contentPreview: s.content.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 120),
-    })),
-  };
-
-  for (const section of imageCandidates) {
+  async function generateImageForSection(
+    section: (typeof imageCandidates)[number],
+  ): Promise<{ sectionId: string; dataUrl: string }> {
     emit({
       type: "reasoning",
       message: `Generating image for section "${section.id}"${section.preferGif ? " (GIF/motion preferred)" : ""}.`,
       payload: { sectionId: section.id },
     });
-
     const visualDescription = await buildVisualDescription(
       {
         title: section.title,
@@ -267,15 +256,11 @@ ${template?.css_scaffold ?? "N/A"}`;
       gateway("openai/gpt-4.1-mini"),
       funnelContext,
     );
-
-    const { generateFunnelMedia } = await import("@/lib/generate-funnel-media");
-    const { getImageModel } = await import("@/lib/image-model");
-    const { getVideoModel } = await import("@/lib/video-model");
     const { dataUrl } = await generateFunnelMedia({
       prompt: visualDescription,
       preferGif: section.preferGif ?? false,
-      imageModel: getImageModel(),
-      videoModel: getVideoModel(),
+      imageModel,
+      videoModel,
       sectionId: section.id,
       onVideoFallback: (sid, err) => {
         const msg = err instanceof Error ? err.message : String(err);
@@ -285,8 +270,53 @@ ${template?.css_scaffold ?? "N/A"}`;
         });
       },
     });
+    return { sectionId: section.id, dataUrl };
+  }
 
-    generatedImages[section.id] = dataUrl;
+  async function runWithConcurrencyLimit<T, R>(
+    items: T[],
+    limit: number,
+    fn: (item: T) => Promise<R>,
+  ): Promise<R[]> {
+    const results: R[] = new Array(items.length);
+    let index = 0;
+    async function worker(): Promise<void> {
+      while (index < items.length) {
+        const i = index++;
+        if (i >= items.length) break;
+        results[i] = await fn(items[i]);
+      }
+    }
+    const workers = Array.from(
+      { length: Math.min(limit, items.length) },
+      () => worker(),
+    );
+    await Promise.all(workers);
+    return results;
+  }
+
+  const htmlCssTask = (async () => {
+    for await (const partial of partialObjectStream) {
+      if (typeof partial.html === "string" && partial.html.length > 0) {
+        emit({ type: "html-stream", payload: { value: partial.html } });
+      }
+      if (typeof partial.css === "string" && partial.css.length > 0) {
+        emit({ type: "css-stream", payload: { value: partial.css } });
+      }
+    }
+    return htmlCssObject;
+  })();
+
+  const [htmlCssResult, imageResults] = await Promise.all([
+    htmlCssTask,
+    runWithConcurrencyLimit(imageCandidates, IMAGE_CONCURRENCY, generateImageForSection),
+  ]);
+
+  const html = htmlCssResult.html;
+  const css = htmlCssResult.css;
+  const generatedImages: Record<string, string> = {};
+  for (const { sectionId, dataUrl } of imageResults) {
+    generatedImages[sectionId] = dataUrl;
   }
 
   emit({
