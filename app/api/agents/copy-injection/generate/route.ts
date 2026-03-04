@@ -24,7 +24,7 @@ import {
   createSupabaseAdminClient,
 } from "@/utils/supabase/server";
 
-export const maxDuration = 3000;
+export const maxDuration = 300;
 
 const generateSchema = z.object({
   funnelName: z.string().min(3),
