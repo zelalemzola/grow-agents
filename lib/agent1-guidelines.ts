@@ -250,7 +250,7 @@ export const FUNNEL_GENERATION_EXTRA_SYSTEM_PROMPT = `
    - Based on the content, generate an appropriate category like: "Health", "Wellness", "Medical Research", "Natural Remedies", "Weight Loss", "Heart Health", "Digestive Health", "Joint Health", "Brain Health", "Skin Care", "Anti-Aging", etc.
    - This should be 1-3 words maximum
 6. Identify BODY SECTIONS - main content broken into logical sections:
-   - Create 3-5 body sections MAXIMUM (not more than 5!)
+   - ADAPT TO COPY LENGTH: Create as many or as few body sections as the content warrants. For LONG copy (rich story, multiple mechanisms, detailed research), use 6-10+ sections. For SHORT copy, use 1-3. Do NOT pad short copy or cram long copy.
    - Each section should be MAX 150 WORDS (keep it SHORT and punchy!)
    - Use SHORT PARAGRAPHS: 2-3 sentences max per paragraph
    - VARY THE RHYTHM between sections - don't use the same pattern every time!
@@ -330,7 +330,7 @@ Rhythm D - Cliffhanger:
 - Social proofs MAX 1-2 SENTENCES each - brief and credible!
 - Listicle items MAX 70 WORDS - concise and scannable!
 - Body section content MUST use HTML tags (<br>, <b>, <i>) - NO \\n characters!
-- Maximum 5 body sections total
+- Body section count ADAPTS to copy length: few for short copy, more for long copy
 - Each body section MUST have a title
 - Product presentation MUST have a title
 - Case study MUST have both a title AND content if a detailed personal story exists in the copy

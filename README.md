@@ -21,6 +21,7 @@ This project now includes:
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY`
 - `AI_GATEWAY_API_KEY`
+- `GOOGLE_VEO_API_KEY` or `GOOGLE_GENERATIVE_AI_API_KEY` (optional) — for direct Google Veo GIF/video generation. When set, uses your Google API key instead of AI Gateway for video. Get a key at [ai.google.dev](https://ai.google.dev).
 
 ## Getting Started
 

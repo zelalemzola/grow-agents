@@ -132,6 +132,8 @@ Produce a detailed section plan for a high-converting funnel landing page.
 You MUST map content into conversion-oriented sections in logical order.
 Keep copy assertive but realistic and policy-safe.
 
+ADAPT TO COPY LENGTH: The user's objective/copy may be longer or shorter than any template. Create as many sections as the content warrants—do NOT pad short copy with filler or cram long copy into few sections. Long copy → more body/proof sections (6-10+). Short copy → fewer sections (1-3 body). The template defines layout style, not a fixed section count. Every piece of substantive content should get its own section where appropriate.
+
 Funnel name: ${parsedData.funnelName}
 Objective: ${parsedData.objective}
 Campaign context: ${parsedData.campaignContext ?? "N/A"}
@@ -144,11 +146,11 @@ For each section include:
 - content
 - ctaLabel (string when relevant, otherwise null)
 - imagePrompt: A concrete 1-2 sentence visual description for this section's image. MUST directly illustrate this section's content. Follow advertorial rules: editorial, candid, no text/logos. Headline images create curiosity without revealing the solution. Body images explain the single core idea. Be specific to the copy.
-- preferGif: CRITICAL for advertorial credibility. Set TRUE when: (a) HEADLINE implies process, transformation, hidden cause, before/after, or change over time; (b) BODY explains mechanism, digestion, absorption, delivery path, how-it-works, or cause-and-effect; (c) PRODUCT/mechanism section shows delivery or absorption. DEFAULT to true for body and product sections—most supplement/health/transformation copy benefits from motion. Set FALSE only for: static testimonials, FAQs, simple hero hooks with no process implied, pure comparison tables.
+- preferGif: Per the IMAGE GUIDELINE "When to Use Animation" rules. Set TRUE when: (a) HEADLINE implies process, transformation, hidden cause, before/after, or change over time; (b) BODY explains mechanism, digestion, absorption, delivery path, how-it-works, or cause-and-effect over time; (c) PRODUCT section shows mechanism, delivery, or absorption. Set FALSE for: static testimonials, FAQs, simple hero hooks with no process, pure comparison tables, or when a frozen moment creates stronger tension. DEFAULT to true for body and product sections that explain processes.
 
-Examples: body explaining "how it enters the bloodstream" → preferGif: true; body explaining "digestion over 24 hours" → preferGif: true; headline "Scientists discover what happens inside your gut" → preferGif: true; testimonial quote with photo → preferGif: false; FAQ "How do I take it?" → preferGif: false.
+Examples: "how it enters the bloodstream" → preferGif: true; "digestion over 24 hours" → preferGif: true; "Scientists discover what happens inside your gut" → preferGif: true; testimonial quote → preferGif: false; FAQ "How do I take it?" → preferGif: false.
 
-Important: every section object MUST include ctaLabel, imagePrompt, and preferGif. imagePrompt must be content-specific, not generic. When in doubt, prefer true for body/product sections.`,
+Important: every section object MUST include ctaLabel, imagePrompt, and preferGif. imagePrompt must be content-specific, not generic. Follow the image guideline—use GIF/animation wherever it improves credibility and comprehension.`,
   });
 
   const sectionPlan = sectionPlanResult.object;
@@ -177,6 +179,12 @@ Goal:
 - Use semantic HTML.
 - Include placeholders for generated images as <img src="{{image:SECTION_ID}}" ...>.
 - Do not include markdown fences.
+
+ADAPTIVE LAYOUT (CRITICAL):
+- The template scaffold shows the desired UI flow, typography, and visual style—NOT a rigid structure.
+- If the section plan has MORE sections than the template shows (e.g. 8 body sections vs 4), extend/repeat the layout pattern. Add more body blocks, testimonials, or proof sections as needed. Preserve the template's look and feel.
+- If the section plan has FEWER sections, condense the layout. Do NOT leave empty placeholders or unused template structure.
+- Match the output structure exactly to the sections in the plan. Every section in the plan must appear in the HTML; no extra or missing sections.
 
 UI/LAYOUT REQUIREMENTS (critical for conversion):
 - Mobile-first responsive: readable on small screens, scales up for desktop.
@@ -261,11 +269,13 @@ ${template?.css_scaffold ?? "N/A"}`;
     );
 
     const { generateFunnelMedia } = await import("@/lib/generate-funnel-media");
+    const { getImageModel } = await import("@/lib/image-model");
+    const { getVideoModel } = await import("@/lib/video-model");
     const { dataUrl } = await generateFunnelMedia({
       prompt: visualDescription,
       preferGif: section.preferGif ?? false,
-      imageModel: gateway.image("google/imagen-4.0-fast-generate-001"),
-      videoModel: gateway.video("google/veo-3.1-fast-generate-001"),
+      imageModel: getImageModel(),
+      videoModel: getVideoModel(),
       sectionId: section.id,
       onVideoFallback: (sid, err) => {
         const msg = err instanceof Error ? err.message : String(err);

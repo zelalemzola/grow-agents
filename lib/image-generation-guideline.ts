@@ -210,10 +210,50 @@ Generation fails if:
 - Product mechanism is not visually demonstrated
 - Style looks like banner advertising
 - Text appears in the image
-- The image resembles stock advertising photography`;
+- The image resembles stock advertising photography
+
+---
+
+# When to Use Animation (GIF/Video)
+
+Use motion/animation when the content requires it for credibility and comprehension. Static images when a frozen moment is stronger.
+
+## Headline → Use GIF/Video when:
+- Headline implies **process**, **transformation**, **hidden cause**, or **change over time**
+- Headline suggests something happening or about to happen
+- Examples: "Scientists discover what happens inside your gut", "The hidden cause of...", "Before and after"
+
+## Body → Use GIF/Video when:
+- Section explains **mechanism**, **digestion**, **absorption**, **delivery path**, **how-it-works**
+- Section describes **cause-and-effect over time**
+- Content requires showing a process, pathway, or transformation
+- Examples: "how it enters the bloodstream", "digestion over 24 hours", "the delivery path to..."
+
+## Product → Use GIF/Video when:
+- Section shows **mechanism**, **delivery**, or **absorption**
+- Product introduction that must visually prove how it works
+- Mechanism examples: direct delivery, bypassing digestion, targeted absorption
+
+## Use static when:
+- Static testimonials, FAQs, simple hero hooks with no process implied
+- Pure comparison tables, conditions, or simple "this is happening" scenes
+- A frozen moment creates stronger tension or mystery
+
+## Animation style (when motion is used):
+- 2–4 second loop for headlines; 2–5 for body; 3–6 for product
+- Subtle, natural movement only (breathing, hand shift, slow zoom, light change)
+- No dramatic transitions, overlays, or flashy effects
+- Must feel like a living moment—editorial, candid—never a motion graphic ad
+- Motion clarifies mechanics and never distracts`;
 
 /**
  * Compact style directives to append to image model prompts.
  * The image model receives a single prompt string; these enforce the guideline's visual tone.
  */
 export const IMAGE_MODEL_STYLE_DIRECTIVE = `Style: Photorealistic, editorial, candid, observational. Natural lighting. Calm, educational, trustworthy tone. No text, logos, badges, or promotional elements. Must NOT look like advertising or stock photography.`;
+
+/**
+ * Animation style for video/GIF generation, per the image guideline.
+ * Use when preferGif is true to enforce consistent motion quality.
+ */
+export const ANIMATION_STYLE_DIRECTIVE = `Animation style: 2-4 second loop. Subtle, natural movement only (breathing, hand shift, slow zoom, light change). No dramatic transitions, overlays, or flashy effects. Must feel like a living moment—editorial, candid—never a motion graphic ad. Motion clarifies and never distracts.`;

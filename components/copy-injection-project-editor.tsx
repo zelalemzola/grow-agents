@@ -25,7 +25,6 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { renderPreviewDocument } from "@/lib/copy-injection";
 import { createPreviewSrcDoc, injectImagesIntoHtml } from "@/lib/funnel-preview";
 import { readUiMessageSseStream, UiStreamChunk } from "@/lib/read-ui-stream";
 import {
@@ -618,8 +617,7 @@ export function CopyInjectionProjectEditor({
     }
 
     const zip = new JSZip();
-    const htmlWithImages = injectImagesIntoHtml(htmlDraft, imagesDraft);
-    const standaloneHtml = renderPreviewDocument(htmlWithImages, cssDraft);
+    const standaloneHtml = createPreviewSrcDoc(htmlDraft, cssDraft, imagesDraft);
 
     zip.file("index.html", standaloneHtml);
     zip.file("styles.css", cssDraft);
@@ -637,8 +635,7 @@ export function CopyInjectionProjectEditor({
   };
 
   const handleCopyExportReady = async () => {
-    const htmlWithImages = injectImagesIntoHtml(htmlDraft, imagesDraft);
-    const fullPage = renderPreviewDocument(htmlWithImages, cssDraft);
+    const fullPage = createPreviewSrcDoc(htmlDraft, cssDraft, imagesDraft);
     try {
       await navigator.clipboard.writeText(fullPage);
       setStatus("Copied full page to clipboard.");
@@ -997,7 +994,8 @@ export function CopyInjectionProjectEditor({
             key={previewKey}
             title="live-funnel-preview"
             className="h-[82vh] w-full rounded-lg border border-border/60 bg-white shadow-inner dark:bg-zinc-900"
-            sandbox="allow-same-origin"
+            sandbox="allow-same-origin allow-scripts"
+            allow="autoplay; fullscreen"
             srcDoc={preview}
           />
         </div>

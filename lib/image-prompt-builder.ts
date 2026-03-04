@@ -118,6 +118,8 @@ Section content: ${plainContent}
 ${typeHint ? `\nSection-type rules: ${typeHint}` : ""}
 ${funnelContextBlock}
 
+${section.preferGif ? "This image will be ANIMATED (GIF/video). Describe a moment of transition, process in progress, or cause-effect in motion—something that benefits from subtle movement (e.g. digestion, absorption, before/after moment, mechanism at work)." : ""}
+
 Task: Write 1-2 sentences describing the photograph. Describe ONLY the visual scene: people, setting, objects, lighting, mood. Be specific to this content. Output ONLY the scene description—no meta-instructions.`,
   });
 

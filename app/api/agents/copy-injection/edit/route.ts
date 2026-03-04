@@ -186,7 +186,7 @@ Return concise summary, htmlCssChangesNeeded, and imageEdits.
 
 For each imageEdit:
 - prompt: 1-2 sentence description of what the new photograph should show (people, setting, objects, mood). Describe the visual scene only - specific to the funnel content. No instructions or meta-commentary.
-- preferGif: set true when the guideline requires animation (headline implying process/transformation, body explaining mechanism/digestion/absorption, product mechanism). Otherwise false.`,
+- preferGif: Set true when (a) the user EXPLICITLY asks for a GIF, animation, or video (e.g. "make it a GIF", "change the GIF", "add animation", "make it animated"); OR (b) per the image guideline: headline implies process/transformation; body explains mechanism, digestion, absorption, delivery path, or cause-effect; product shows mechanism/delivery. Set false for testimonials, FAQs, static hooks, or when the user asks for a static image. User request for GIF/animation always wins.`,
     });
 
   const editPlan = editPlanResult.object;
@@ -309,14 +309,16 @@ ${cssExcerpt}`,
       payload: { count: editPlan.imageEdits.length },
     });
     const { generateFunnelMedia } = await import("@/lib/generate-funnel-media");
-    const imageModel = gateway.image("google/imagen-4.0-fast-generate-001");
+    const { getImageModel } = await import("@/lib/image-model");
+    const { getVideoModel } = await import("@/lib/video-model");
+    const imageModel = getImageModel();
     const results = await Promise.all(
       editPlan.imageEdits.map((imageEdit) =>
         generateFunnelMedia({
             prompt: imageEdit.prompt,
             preferGif: imageEdit.preferGif ?? false,
             imageModel,
-            videoModel: gateway.video("google/veo-3.1-fast-generate-001"),
+            videoModel: getVideoModel(),
             sectionId: imageEdit.sectionId,
             onVideoFallback: (sid, err) => {
               const msg = err instanceof Error ? err.message : String(err);

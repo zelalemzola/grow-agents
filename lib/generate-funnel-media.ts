@@ -1,5 +1,6 @@
 import { experimental_generateVideo, generateImage } from "ai";
 
+import { ANIMATION_STYLE_DIRECTIVE } from "@/lib/image-generation-guideline";
 import { buildImageModelPrompt } from "@/lib/image-prompt-builder";
 import type { ImageModel } from "ai";
 
@@ -31,7 +32,7 @@ export async function generateFunnelMedia(
     try {
       const videoResult = await experimental_generateVideo({
         model: videoModel,
-        prompt: `${imagePrompt} Subtle, natural motion. 2-4 second loop feel. Editorial, candid.`,
+        prompt: `${imagePrompt} ${ANIMATION_STYLE_DIRECTIVE}`,
         aspectRatio: "16:9",
         duration: 4,
       });
