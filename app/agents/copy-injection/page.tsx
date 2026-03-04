@@ -48,6 +48,7 @@ export default function CopyInjectionDashboardPage() {
   return (
     <div className="mx-auto max-w-5xl">
       <div className="mb-8">
+
         <div className="flex items-center gap-4">
           <div className="flex size-14 items-center justify-center rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 text-primary shadow-sm">
             <Sparkles className="size-7" />

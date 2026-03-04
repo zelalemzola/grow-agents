@@ -26,6 +26,7 @@ import {
   SidebarRail,
   SidebarTrigger,
 } from "@/components/ui/sidebar";
+import { ModeToggle } from "./ModeToggle";
 
 const navItems = [
   {
@@ -112,7 +113,9 @@ export function CopyInjectionShell({
 
         <SidebarFooter className="border-t border-sidebar-border group-data-[collapsible=icon]:hidden">
           <div className="px-2 py-2 text-xs text-sidebar-foreground/70">
-            ⌘B to toggle
+          
+          <ModeToggle />
+        
           </div>
         </SidebarFooter>
 

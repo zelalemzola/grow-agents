@@ -12,6 +12,7 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { AGENTS } from "@/lib/agents";
+import { ModeToggle } from "@/components/ModeToggle";
 
 const agentIcons: Record<string, React.ComponentType<{ className?: string }>> = {
   "copy-injection": Sparkles,
@@ -46,6 +47,9 @@ export default function HomePage() {
     <div className="min-h-screen">
       <main className="mx-auto w-full max-w-6xl px-6 py-12 md:py-16">
         <section className="mb-12">
+        <div className="flex justify-end mb-4">
+          <ModeToggle />
+        </div>
           <div className="flex items-center gap-4">
             <div className="flex size-16 items-center justify-center rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 text-primary shadow-sm">
               <Sparkles className="size-8" />
