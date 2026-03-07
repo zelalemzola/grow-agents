@@ -5,6 +5,7 @@ import {
   IMAGE_GENERATION_GUIDELINE,
   IMAGE_MODEL_STYLE_DIRECTIVE,
 } from "@/lib/image-generation-guideline";
+import { getGifGenerationGuideline } from "@/lib/gif-generation-guideline";
 
 /**
  * Builds a pure visual scene description from advertorial section copy.
@@ -12,14 +13,26 @@ import {
  * Images MUST directly illustrate the section's content and align with the whole funnel.
  */
 
+const sceneTypeSchema = z.enum([
+  "before_after",
+  "doctor_recommendation",
+  "testimonial_with_product",
+  "product_mechanism",
+  "product_intro",
+  "transformation",
+  "other",
+]);
+
 const visualDescriptionSchema = z.object({
   description: z
     .string()
     .min(20)
-    .max(350)
+    .max(450)
     .describe(
-      "Concrete visual scene description - people, setting, objects, lighting, mood. Must directly illustrate THIS section's content.",
+      "Concrete hyperrealistic scene description. Specify: who (people, roles), what is happening, setting, lighting, mood. Must match exactly what the section content describes.",
     ),
+  /** For product sections: scene type to apply targeted style hints */
+  sceneType: sceneTypeSchema.optional(),
 });
 
 type SectionType =
@@ -37,7 +50,20 @@ export interface FunnelContextForImage {
   pageName: string;
   /** Brief summaries of other sections for context (id: summary) */
   sectionSummaries?: Array<{ id: string; title: string; contentPreview: string }>;
+  /** Optional product-specific image/GIF guidelines (e.g. "use before/after, doctor in lab"). Injected for product sections. */
+  productGuidelines?: string;
 }
+
+/** Scene-specific style hints for product sections */
+const SCENE_TYPE_HINTS: Record<string, string> = {
+  before_after: "Split or side-by-side composition, transformation reveal, realistic before/after, authentic results.",
+  doctor_recommendation: "Doctor or expert in clinical/lab setting, professional but approachable, holding or recommending product.",
+  testimonial_with_product: "Real person, genuine happiness, holding product, candid moment, authentic satisfaction.",
+  product_mechanism: "Clear visual of how product works, mechanism in action, educational and precise.",
+  product_intro: "Product clearly visible in context, editorial presentation, not staged advertising.",
+  transformation: "Moment of change or result, authentic progress, real-person feel.",
+  other: "Match the exact scenario described in the content. Hyperrealistic, editorial.",
+};
 
 /**
  * Converts section copy into a concise visual description for image generation.
@@ -52,10 +78,12 @@ export async function buildVisualDescription(
     type?: SectionType;
     imagePrompt?: string | null;
     preferGif?: boolean;
+    /** When true and product reference will be provided, add product-incorporation guidance */
+    isProductSection?: boolean;
   },
   model: Parameters<typeof generateObject>[0]["model"],
   funnelContext?: FunnelContextForImage,
-): Promise<string> {
+): Promise<{ description: string; sceneType?: string }> {
   // Use section plan's imagePrompt only when it's concrete, section-specific, and non-generic
   if (section.imagePrompt && section.imagePrompt.trim().length >= 40) {
     const prompt = section.imagePrompt.trim();
@@ -65,7 +93,7 @@ export async function buildVisualDescription(
       ) &&
       (section.title || section.content)
     ) {
-      return prompt;
+      return { description: prompt, sceneType: undefined };
     }
   }
 
@@ -88,6 +116,11 @@ export async function buildVisualDescription(
   };
   const typeHint = section.type ? typeGuidance[section.type] ?? "" : "";
 
+  const gifBlock =
+    section.preferGif === true
+      ? `\n\n---\nGIF/MECHANISM ANIMATION RULES (MANDATORY for this GIF):\n${getGifGenerationGuideline().slice(0, 2500)}`
+      : "";
+
   const funnelContextBlock = funnelContext
     ? `
 FUNNEL CONTEXT (images must align with the overall story):
@@ -102,44 +135,64 @@ ${funnelContext.sectionSummaries
 `
     : "";
 
-  const result = await generateObject({
-    model,
-    schema: visualDescriptionSchema,
-    system: IMAGE_GENERATION_GUIDELINE,
-    prompt: `You are creating an image for a specific section of an advertorial funnel. The image MUST:
-1) Directly illustrate THIS section's content (title + content below)
-2) Align with the funnel's overall objective and story
-3) Follow the guideline rules for this section type exactly
+  const productGuidelinesBlock =
+    section.isProductSection && funnelContext?.productGuidelines?.trim()
+      ? `\n\nPRODUCT-SPECIFIC GUIDELINES (follow these for this product):\n${funnelContext.productGuidelines.trim().slice(0, 1500)}`
+      : "";
+
+  const contentAwarePrompt = `You are creating a HYPERREALISTIC image for a specific section. The image MUST perfectly match what the surrounding content describes.
+
+CONTENT-AWARE EXTRACTION: Analyze the section content and determine:
+- WHO is in the scene (doctor, patient, happy customer, researcher, etc.)
+- WHAT is happening (before/after reveal, recommendation, holding product, transformation, mechanism)
+- WHERE it takes place (lab, clinic, home, office)
+- TONE (clinical, hopeful, testimonial, educational)
 
 Section type: ${section.type ?? "body"}
-Section ID: ${section.id ?? "unknown"}
 Section title: ${section.title}
 Section content: ${plainContent}
 ${typeHint ? `\nSection-type rules: ${typeHint}` : ""}
 ${funnelContextBlock}
+${productGuidelinesBlock}
 
-${section.preferGif ? "This image will be ANIMATED (GIF/video). Describe a moment of transition, process in progress, or cause-effect in motion—something that benefits from subtle movement (e.g. digestion, absorption, before/after moment, mechanism at work)." : ""}
+${section.preferGif ? "This will be ANIMATED (GIF/video). Describe a moment of transition, process in progress, or cause-effect in motion." : ""}
+${section.isProductSection ? "This section discusses the product. Describe the scene so the product is clearly incorporated—show it in context. If a product reference image is provided, match that product exactly." : ""}
 
-Task: Write 1-2 sentences describing the photograph. Describe ONLY the visual scene: people, setting, objects, lighting, mood. Be specific to this content. Output ONLY the scene description—no meta-instructions.`,
+Task: Write a concrete scene description (2-3 sentences). Specify people, setting, lighting, mood. Be EXACTLY aligned with what the content describes. Output hyperrealistic, photorealistic—like a real photograph.${section.isProductSection ? " Also choose the most fitting sceneType from: before_after, doctor_recommendation, testimonial_with_product, product_mechanism, product_intro, transformation, other." : ""}`;
+
+  const result = await generateObject({
+    model,
+    schema: visualDescriptionSchema,
+    system: IMAGE_GENERATION_GUIDELINE + gifBlock,
+    prompt: contentAwarePrompt,
   });
 
-  return result.object.description;
+  return {
+    description: result.object.description,
+    sceneType: result.object.sceneType,
+  };
 }
 
 /**
  * Builds the final prompt for the image model.
  * Uses the guideline's style directives so images match client needs.
  * When preferGif is true, adds motion-suggesting language for dynamic compositions.
+ * When sceneType is provided (product sections), adds targeted style hints.
  */
 export function buildImageModelPrompt(
   visualDescription: string,
   preferGif?: boolean,
+  sceneType?: string,
 ): string {
   const motionHint =
     preferGif === true
       ? " Compose to suggest subtle motion: implied movement, dynamic angle, moment of transition, or process in progress. The scene should feel like a captured living moment."
       : "";
-  return `${visualDescription}${motionHint}
+  const sceneHint =
+    sceneType && SCENE_TYPE_HINTS[sceneType]
+      ? ` ${SCENE_TYPE_HINTS[sceneType]}`
+      : "";
+  return `${visualDescription}${motionHint}${sceneHint}
 
 ${IMAGE_MODEL_STYLE_DIRECTIVE}`;
 }

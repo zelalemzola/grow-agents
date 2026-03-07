@@ -13,6 +13,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { AGENTS } from "@/lib/agents";
 import { ModeToggle } from "@/components/ModeToggle";
+// import Image from "next/image";
 
 const agentIcons: Record<string, React.ComponentType<{ className?: string }>> = {
   "copy-injection": Sparkles,
@@ -50,10 +51,8 @@ export default function HomePage() {
         <div className="flex justify-end mb-4">
           <ModeToggle />
         </div>
-          <div className="flex items-center gap-4">
-            <div className="flex size-16 items-center justify-center rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 text-primary shadow-sm">
-              <Sparkles className="size-8" />
-            </div>
+          <div className="flex items-center justify-between -mt-10">
+
             <div>
               <h1 className="text-4xl font-bold tracking-tight md:text-5xl">
                 Grow Agents
@@ -63,6 +62,10 @@ export default function HomePage() {
                 compliance. Choose an agent to get started.
               </p>
             </div>
+            <div className="flex items-end mr-20">
+            <img src="/growbot.png" alt="Grow Agents" width={120} height={120} />
+            </div>
+
           </div>
         </section>
 

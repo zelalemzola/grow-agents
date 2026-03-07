@@ -324,6 +324,8 @@ Rhythm D - Cliffhanger:
 "That's when she found something unexpected.<br><br>Something her doctors had dismissed for years."
 
 ## CRITICAL RULES:
+- **VERBATIM COPY (NON-NEGOTIABLE):** You MUST preserve the user's advertorial copy EXACTLY. Do NOT add, remove, rephrase, or summarize any line, sentence, or paragraph. Every piece of text the user provides must appear in your output unchanged. Extract structure (headline, body sections, etc.) but keep all content verbatim. If the copy has 10 paragraphs, output must have those same 10 paragraphs with identical wording. No hallucination—no invented or omitted content.
+- **MEDIA PLACEHOLDERS:** The user may include [image] or [gif] in their copy. Keep these markers exactly where they appear; they will be replaced with generated media. Generate images/GIFs ONLY at those placeholder positions—do not add extra image sections elsewhere.
 - POST CATEGORY is ALWAYS REQUIRED - generate an appropriate category based on the content!
 - Body sections MAX 150 WORDS - short paragraphs, varied rhythm!
 - Reviews MAX 2-4 SENTENCES - human-like, not marketing speak!

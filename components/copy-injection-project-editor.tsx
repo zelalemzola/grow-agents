@@ -21,6 +21,8 @@ import {
   CheckCircle2,
   Zap,
   Copy,
+  ImagePlus,
+  X,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -64,6 +66,8 @@ export function CopyInjectionProjectEditor({
   const [funnelName, setFunnelName] = useState("New Conversion Funnel");
   const [objective, setObjective] = useState("");
   const [campaignContext, setCampaignContext] = useState("");
+  const [productImages, setProductImages] = useState<string[]>([]);
+  const [productGuidelines, setProductGuidelines] = useState("");
   const [editComment, setEditComment] = useState("");
   const [manualSaveNote, setManualSaveNote] = useState("");
 
@@ -225,6 +229,8 @@ export function CopyInjectionProjectEditor({
           objective,
           campaignContext,
           templateId: selectedTemplateId || undefined,
+          productImages: productImages.length > 0 ? productImages : undefined,
+          productGuidelines: productGuidelines.trim() || undefined,
           stream: true,
         }),
       });
@@ -739,6 +745,83 @@ export function CopyInjectionProjectEditor({
             onChange={(event) => setCampaignContext(event.target.value)}
             placeholder="Audience, angle, objections, policy constraints..."
           />
+          <div className="mt-3">
+            <p className="mb-1.5 text-xs font-medium text-muted-foreground">
+              Product images (optional)
+            </p>
+            <p className="mb-2 text-xs text-muted-foreground/80">
+              Upload product photos for [image] placeholders in product sections. Used when copy discusses the product.
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                id="product-image-upload"
+                multiple
+                onChange={async (e) => {
+                  const files = Array.from(e.target.files ?? []);
+                  if (!files.length) return;
+                  const imageFiles = files
+                    .filter((f) => f.type.startsWith("image/"))
+                    .slice(0, 3 - productImages.length);
+                  if (!imageFiles.length) return;
+                  const dataUrls = await Promise.all(
+                    imageFiles.map(
+                      (f) =>
+                        new Promise<string>((resolve) => {
+                          const r = new FileReader();
+                          r.onload = () => resolve(r.result as string);
+                          r.readAsDataURL(f);
+                        }),
+                    ),
+                  );
+                  setProductImages((prev) => [...prev, ...dataUrls].slice(0, 3));
+                  e.target.value = "";
+                }}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="gap-1.5"
+                onClick={() => document.getElementById("product-image-upload")?.click()}
+              >
+                <ImagePlus className="size-3.5" />
+                Add product image
+              </Button>
+              {productImages.map((url, i) => (
+                <div key={i} className="relative group">
+                  <img
+                    src={url}
+                    alt={`Product ${i + 1}`}
+                    className="h-14 w-14 rounded-md border border-input object-cover"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setProductImages((p) => p.filter((_, j) => j !== i))}
+                    className="absolute -right-1 -top-1 flex size-5 items-center justify-center rounded-full bg-destructive text-destructive-foreground opacity-0 transition-opacity group-hover:opacity-100"
+                  >
+                    <X className="size-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="mt-3">
+            <p className="mb-1.5 text-xs font-medium text-muted-foreground">
+              Product image/GIF guidelines (optional)
+            </p>
+            <p className="mb-2 text-xs text-muted-foreground/80">
+              Product-specific visual rules for this campaign (e.g. &quot;use before/after results, doctor in lab recommending, testimonials with happy customers holding product&quot;). Applied when generating images in product-related sections.
+            </p>
+            <textarea
+              className="min-h-16 w-full rounded-lg border border-input bg-background px-3 py-2.5 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+              value={productGuidelines}
+              onChange={(e) => setProductGuidelines(e.target.value)}
+              placeholder="e.g. Before/after in realtime, doctor in lab recommending, testimonials with person holding product..."
+            />
+          </div>
           <div className="mt-3 flex flex-wrap gap-2">
             <select
               className="h-9 flex-1 min-w-[140px] rounded-lg border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"

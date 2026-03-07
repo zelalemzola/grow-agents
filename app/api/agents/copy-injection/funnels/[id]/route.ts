@@ -25,3 +25,19 @@ export async function GET(_request: Request, { params }: Params) {
 
   return NextResponse.json({ funnel: data });
 }
+
+export async function DELETE(_request: Request, { params }: Params) {
+  const { id } = await params;
+  const supabase = await createServerSupabaseClient();
+
+  const { error } = await supabase.from("funnels").delete().eq("id", id);
+
+  if (error) {
+    return NextResponse.json(
+      { error: error.message },
+      { status: 500 },
+    );
+  }
+
+  return NextResponse.json({ success: true });
+}

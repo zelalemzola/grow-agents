@@ -10,6 +10,7 @@ import {
   Loader2,
   Layers,
   Search,
+  Trash2,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -44,6 +45,32 @@ export function CopyInjectionProjectsList() {
   const [status, setStatus] = useState("Loading projects...");
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const handleDelete = async (
+    e: React.MouseEvent,
+    funnel: FunnelListItem,
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!confirm(`Delete project "${funnel.name}"? This cannot be undone.`))
+      return;
+    setDeletingId(funnel.id);
+    try {
+      const res = await fetch(
+        `/api/agents/copy-injection/funnels/${funnel.id}`,
+        { method: "DELETE" },
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Delete failed.");
+      setFunnels((prev) => prev.filter((f) => f.id !== funnel.id));
+      setStatus("Project deleted.");
+    } catch (err) {
+      setStatus(`Delete failed: ${String(err)}`);
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   const filteredFunnels = searchQuery.trim()
     ? funnels.filter(
@@ -163,16 +190,35 @@ export function CopyInjectionProjectsList() {
           {filteredFunnels.map((funnel, i) => {
             const accent = ACCENT_PALETTE[i % ACCENT_PALETTE.length];
             return (
-              <Link
+              <div
                 key={funnel.id}
-                href={`/agents/copy-injection/projects/${funnel.id}`}
                 className="group relative overflow-hidden rounded-2xl border border-border/60 bg-card p-5 shadow-sm transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5"
               >
+                <Link
+                  href={`/agents/copy-injection/projects/${funnel.id}`}
+                  className="absolute inset-0 z-0"
+                />
                 <div
                   className={`absolute inset-0 bg-gradient-to-br ${accent.gradient} opacity-0 transition-opacity duration-300 group-hover:opacity-100`}
                 />
                 <div className={`absolute inset-0 rounded-2xl border-2 border-transparent ${accent.border} transition-colors duration-300`} />
                 <div className="relative flex flex-col">
+                  <div className="absolute right-0 top-0 z-10">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="size-8 text-muted-foreground opacity-60 hover:bg-destructive/10 hover:text-destructive hover:opacity-100"
+                      onClick={(e) => handleDelete(e, funnel)}
+                      disabled={deletingId === funnel.id}
+                      title="Delete project"
+                    >
+                      {deletingId === funnel.id ? (
+                        <Loader2 className="size-4 animate-spin" />
+                      ) : (
+                        <Trash2 className="size-4" />
+                      )}
+                    </Button>
+                  </div>
                   <div
                     className={`mb-4 flex size-12 items-center justify-center rounded-xl ${accent.iconBg} transition-transform duration-300 group-hover:scale-105`}
                   >
@@ -192,7 +238,7 @@ export function CopyInjectionProjectsList() {
                     <ArrowRight className="size-4" />
                   </span>
                 </div>
-              </Link>
+              </div>
             );
           })}
         </div>

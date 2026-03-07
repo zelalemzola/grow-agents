@@ -11,6 +11,12 @@ import {
   htmlCssSchema,
   sectionPlanSchema,
 } from "@/lib/copy-injection";
+import { classifyIsProductSection } from "@/lib/classify-product-section";
+import {
+  parseMediaPlaceholders,
+  replacePlaceholdersInHtml,
+  getPlaceholderContext,
+} from "@/lib/media-placeholders";
 import { buildVisualDescription } from "@/lib/image-prompt-builder";
 import {
   agent1PromptContext,
@@ -32,6 +38,10 @@ const generateSchema = z.object({
   campaignContext: z.string().optional(),
   templateId: z.string().uuid().optional(),
   stream: z.boolean().optional(),
+  /** Optional product images (data URLs) for product-related sections. Used when generating images at [image]/[gif] placeholders in product-focused sections. */
+  productImages: z.array(z.string()).optional(),
+  /** Optional product-specific image/GIF guidelines (e.g. "use before/after results, doctor in lab recommending, testimonials with happy customers holding product"). Injected when generating for product-related sections. */
+  productGuidelines: z.string().optional(),
 });
 
 class RouteError extends Error {
@@ -132,6 +142,8 @@ Produce a detailed section plan for a high-converting funnel landing page.
 You MUST map content into conversion-oriented sections in logical order.
 Keep copy assertive but realistic and policy-safe.
 
+**CRITICAL - VERBATIM COPY:** Preserve the user's advertorial copy EXACTLY. Do NOT add, remove, rephrase, or summarize any line or paragraph. Every sentence the user provides must appear in your section content unchanged. No hallucination—no invented or omitted content. The user may include [image] or [gif] in the copy; keep those markers exactly where they appear (they will be replaced with generated media). Generate media ONLY at those placeholder positions.
+
 ADAPT TO COPY LENGTH: The user's objective/copy may be longer or shorter than any template. Create as many sections as the content warrants—do NOT pad short copy with filler or cram long copy into few sections. Long copy → more body/proof sections (6-10+). Short copy → fewer sections (1-3 body). The template defines layout style, not a fixed section count. Every piece of substantive content should get its own section where appropriate.
 
 Funnel name: ${parsedData.funnelName}
@@ -163,13 +175,55 @@ Important: every section object MUST include ctaLabel, imagePrompt, and preferGi
     },
   });
 
-  const imageCandidates = sectionPlan.sections
-    .filter((section) => Boolean(section.title || section.content))
-    .slice(0, 6);
+  const mediaPlaceholders = parseMediaPlaceholders(parsedData.objective);
+  const productImagesRaw = parsedData.productImages ?? [];
+  const productImageBase64 = productImagesRaw
+    .map((dataUrl) => {
+      const m = /^data:image\/[^;]+;base64,(.+)$/.exec(dataUrl);
+      return m ? m[1] : null;
+    })
+    .filter((x): x is string => Boolean(x))
+    .slice(0, 3);
+
+  type ImageCandidate = {
+    id: string;
+    title: string;
+    content: string;
+    type: "headline" | "hook" | "body" | "cta" | "testimonial" | "faq" | "image" | "proof";
+    imagePrompt: string | null;
+    preferGif: boolean;
+    isProductSection: boolean;
+  };
+  const imageCandidatesBase: Omit<ImageCandidate, "isProductSection">[] =
+    mediaPlaceholders.length > 0
+      ? mediaPlaceholders.map((p, i) => ({
+          id: p.id,
+          title: p.type === "gif" ? "GIF" : "Image",
+          content: getPlaceholderContext(parsedData.objective, i, mediaPlaceholders),
+          type: "body" as const,
+          imagePrompt: null,
+          preferGif: p.type === "gif",
+        }))
+      : [];
+
+  const imageCandidates: ImageCandidate[] =
+    productImageBase64.length > 0
+      ? await Promise.all(
+          imageCandidatesBase.map(async (c) => ({
+            ...c,
+            isProductSection: await classifyIsProductSection(
+              c.content,
+              parsedData.objective,
+              gateway("openai/gpt-4.1-mini"),
+            ),
+          })),
+        )
+      : imageCandidatesBase.map((c) => ({ ...c, isProductSection: false }));
 
   const funnelContext = {
     objective: parsedData.objective,
     pageName: sectionPlan.pageName,
+    productGuidelines: parsedData.productGuidelines?.trim() || undefined,
     sectionSummaries: sectionPlan.sections.map((s) => ({
       id: s.id,
       title: s.title,
@@ -180,7 +234,10 @@ Important: every section object MUST include ctaLabel, imagePrompt, and preferGi
   emit({
     type: "status",
     message: "Building HTML/CSS and generating images in parallel.",
-    payload: { imageCandidates: imageCandidates.length },
+    payload: {
+      imageCandidates: imageCandidates.length,
+      placeholderOnly: mediaPlaceholders.length > 0,
+    },
   });
 
   const htmlCssPrompt = `${copyContext}
@@ -192,8 +249,10 @@ Goal:
 - Preserve structure and conversion flow.
 - Keep CSS maintainable and scoped.
 - Use semantic HTML.
-- Include placeholders for generated images as <img src="{{image:SECTION_ID}}" ...>.
+- **Preserve [image] and [gif] in the HTML exactly where they appear in the content**—they will be replaced with generated media. Do not add image placeholders elsewhere.
 - Do not include markdown fences.
+
+**CSS IS REQUIRED:** You MUST always output complete, full CSS for the entire page. No matter how long the HTML is, the \`css\` field must be complete and never empty or truncated. Every section and element in your HTML must have corresponding styles in the \`css\` field.
 
 ADAPTIVE LAYOUT (CRITICAL):
 - The template scaffold shows the desired UI flow, typography, and visual style—NOT a rigid structure.
@@ -237,31 +296,39 @@ ${template?.css_scaffold ?? "N/A"}`;
   const IMAGE_CONCURRENCY = 1;
 
   async function generateImageForSection(
-    section: (typeof imageCandidates)[number],
+    section: ImageCandidate,
   ): Promise<{ sectionId: string; dataUrl: string }> {
+    const useProductImage =
+      section.isProductSection &&
+      productImageBase64.length > 0 &&
+      !section.preferGif;
     emit({
       type: "reasoning",
-      message: `Generating image for section "${section.id}"${section.preferGif ? " (GIF/motion preferred)" : ""}.`,
+      message: `Generating ${section.preferGif ? "GIF" : "image"} for "${section.id}"${useProductImage ? " (using product reference)" : ""}.`,
       payload: { sectionId: section.id },
     });
-    const visualDescription = await buildVisualDescription(
-      {
-        title: section.title,
-        content: section.content,
-        id: section.id,
-        type: section.type,
-        imagePrompt: section.imagePrompt,
-        preferGif: section.preferGif,
-      },
-      gateway("openai/gpt-4.1-mini"),
-      funnelContext,
-    );
+    const { description: visualDescription, sceneType } =
+      await buildVisualDescription(
+        {
+          title: section.title,
+          content: section.content,
+          id: section.id,
+          type: section.type,
+          imagePrompt: section.imagePrompt,
+          preferGif: section.preferGif,
+          isProductSection: section.isProductSection,
+        },
+        gateway("openai/gpt-4.1-mini"),
+        funnelContext,
+      );
     const { dataUrl } = await generateFunnelMedia({
       prompt: visualDescription,
+      sceneType,
       preferGif: section.preferGif ?? false,
       imageModel,
       videoModel,
       sectionId: section.id,
+      productImageBase64: useProductImage ? productImageBase64[0] : undefined,
       onVideoFallback: (sid, err) => {
         const msg = err instanceof Error ? err.message : String(err);
         emit({
@@ -312,8 +379,22 @@ ${template?.css_scaffold ?? "N/A"}`;
     runWithConcurrencyLimit(imageCandidates, IMAGE_CONCURRENCY, generateImageForSection),
   ]);
 
-  const html = htmlCssResult.html;
-  const css = htmlCssResult.css;
+  let html = htmlCssResult.html;
+  if (mediaPlaceholders.length > 0) {
+    html = replacePlaceholdersInHtml(html, mediaPlaceholders);
+  }
+
+  let css = (htmlCssResult.css ?? "").trim();
+  if (css.length < 50) {
+    css = `* { box-sizing: border-box; }
+body { margin: 0; font-family: system-ui, sans-serif; line-height: 1.5; color: #1a1a1a; background: #fff; }
+img, video { max-width: 100%; height: auto; display: block; }
+section { padding: 1.5rem 1rem; max-width: 720px; margin: 0 auto; }
+h1, h2, h3 { margin-top: 0; margin-bottom: 0.5em; }
+p { margin: 0 0 1em; }
+`;
+  }
+
   const generatedImages: Record<string, string> = {};
   for (const { sectionId, dataUrl } of imageResults) {
     generatedImages[sectionId] = dataUrl;

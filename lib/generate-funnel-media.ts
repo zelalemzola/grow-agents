@@ -1,6 +1,7 @@
 import { experimental_generateVideo, generateImage } from "ai";
 
 import { ANIMATION_STYLE_DIRECTIVE } from "@/lib/image-generation-guideline";
+import { getGifGenerationGuideline } from "@/lib/gif-generation-guideline";
 import { buildImageModelPrompt } from "@/lib/image-prompt-builder";
 import type { ImageModel } from "ai";
 
@@ -15,6 +16,10 @@ export interface GenerateFunnelMediaOptions {
   sectionId?: string;
   /** Called when video generation was attempted but failed (we fall back to image). */
   onVideoFallback?: (sectionId: string, err: unknown) => void;
+  /** Optional product reference image (base64) for product sections. Applied only for static images, not GIF/video. */
+  productImageBase64?: string;
+  /** Scene type for product sections—adds targeted style hints (before_after, doctor_recommendation, etc.). */
+  sceneType?: string;
 }
 
 /**
@@ -25,14 +30,29 @@ export interface GenerateFunnelMediaOptions {
 export async function generateFunnelMedia(
   options: GenerateFunnelMediaOptions,
 ): Promise<{ dataUrl: string; mediaType: string }> {
-  const { prompt, preferGif, imageModel, videoModel, sectionId = "", onVideoFallback } = options;
-  const imagePrompt = buildImageModelPrompt(prompt, preferGif);
+  const {
+    prompt,
+    preferGif,
+    imageModel,
+    videoModel,
+    sectionId = "",
+    onVideoFallback,
+    productImageBase64,
+    sceneType,
+  } = options;
+  const imagePrompt = buildImageModelPrompt(prompt, preferGif, sceneType);
+
+  // Product reference only for static images (video/GIF models may not support it)
+  const useProductReference =
+    Boolean(productImageBase64) && !preferGif;
 
   if (preferGif && videoModel) {
     try {
+      const gifGuideline = getGifGenerationGuideline();
+      const videoPrompt = `${imagePrompt} ${ANIMATION_STYLE_DIRECTIVE}\n\nHyperrealistic, photorealistic animation—must look like real footage, not CGI. GIF rules (follow precisely):\n${gifGuideline.slice(0, 3000)}`;
       const videoResult = await experimental_generateVideo({
         model: videoModel,
-        prompt: `${imagePrompt} ${ANIMATION_STYLE_DIRECTIVE}`,
+        prompt: videoPrompt,
         aspectRatio: "16:9",
         duration: 4,
       });
@@ -50,11 +70,38 @@ export async function generateFunnelMedia(
     }
   }
 
-  const imageResult = await generateImage({
-    model: imageModel,
-    prompt: imagePrompt,
-    aspectRatio: "16:9",
-  });
+  let imageResult;
+  if (useProductReference && productImageBase64) {
+    try {
+      imageResult = await generateImage({
+        model: imageModel,
+        prompt: [
+          { type: "image" as const, image: productImageBase64 },
+          {
+            type: "text" as const,
+            text: `${imagePrompt}\n\nIncorporate the product from the reference image into this scene. Match the product's appearance exactly.`,
+          },
+        ] as unknown as string,
+        aspectRatio: "16:9",
+      });
+    } catch (err) {
+      console.warn(
+        "[generate-funnel-media] Product reference image not supported, falling back to text-only:",
+        err,
+      );
+      imageResult = await generateImage({
+        model: imageModel,
+        prompt: `${imagePrompt}\n\nThis section features the product. Show the product clearly in the scene, editorial and candid style.`,
+        aspectRatio: "16:9",
+      });
+    }
+  } else {
+    imageResult = await generateImage({
+      model: imageModel,
+      prompt: imagePrompt,
+      aspectRatio: "16:9",
+    });
+  }
 
   const mediaType = imageResult.image.mediaType ?? "image/png";
   return {

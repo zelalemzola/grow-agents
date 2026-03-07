@@ -51,6 +51,8 @@ export function CopyInjectionWorkspace() {
   const [funnelName, setFunnelName] = useState("New Conversion Funnel");
   const [objective, setObjective] = useState("");
   const [campaignContext, setCampaignContext] = useState("");
+  const [productImages, setProductImages] = useState<string[]>([]);
+  const [productGuidelines, setProductGuidelines] = useState("");
 
   const [templateName, setTemplateName] = useState("");
   const [templateDescription, setTemplateDescription] = useState("");
@@ -122,6 +124,8 @@ export function CopyInjectionWorkspace() {
           objective,
           campaignContext,
           templateId: selectedTemplateId || undefined,
+          productImages: productImages.length > 0 ? productImages : undefined,
+          productGuidelines: productGuidelines.trim() || undefined,
           stream: true,
         }),
       });
@@ -356,6 +360,80 @@ export function CopyInjectionWorkspace() {
               onChange={(event) => setCampaignContext(event.target.value)}
               placeholder="Extra context (audience, angle, objections, policies)"
             />
+            <div>
+              <p className="mb-1 text-xs font-medium text-muted-foreground">
+                Product images (optional)
+              </p>
+              <p className="mb-2 text-xs text-muted-foreground/80">
+                For [image] placeholders in product sections. Used when copy discusses the product.
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  id="workspace-product-image-upload"
+                  multiple
+                  onChange={async (e) => {
+                    const files = Array.from(e.target.files ?? []);
+                    if (!files.length) return;
+                    const imageFiles = files
+                      .filter((f) => f.type.startsWith("image/"))
+                      .slice(0, 3 - productImages.length);
+                    if (!imageFiles.length) return;
+                    const dataUrls = await Promise.all(
+                      imageFiles.map(
+                        (f) =>
+                          new Promise<string>((resolve) => {
+                            const r = new FileReader();
+                            r.onload = () => resolve(r.result as string);
+                            r.readAsDataURL(f);
+                          }),
+                      ),
+                    );
+                    setProductImages((prev) => [...prev, ...dataUrls].slice(0, 3));
+                    e.target.value = "";
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    document.getElementById("workspace-product-image-upload")?.click()
+                  }
+                >
+                  Add product image
+                </Button>
+                {productImages.map((url, i) => (
+                  <div key={i} className="relative group">
+                    <img
+                      src={url}
+                      alt={`Product ${i + 1}`}
+                      className="h-12 w-12 rounded border object-cover"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setProductImages((p) => p.filter((_, j) => j !== i))}
+                      className="absolute -right-1 -top-1 flex size-4 items-center justify-center rounded-full bg-destructive text-destructive-foreground text-xs opacity-0 group-hover:opacity-100"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div>
+              <p className="mb-1 text-xs font-medium text-muted-foreground">
+                Product image/GIF guidelines (optional)
+              </p>
+              <textarea
+                className="mb-2 min-h-14 w-full rounded-md border bg-background p-3 text-sm"
+                value={productGuidelines}
+                onChange={(e) => setProductGuidelines(e.target.value)}
+                placeholder="e.g. Before/after in realtime, doctor in lab recommending..."
+              />
+            </div>
             <select
               className="h-9 w-full rounded-md border bg-background px-3 text-sm"
               value={selectedTemplateId}

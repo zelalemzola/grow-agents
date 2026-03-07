@@ -4,7 +4,6 @@ import { ChangeEvent, useEffect, useState } from "react";
 import {
   BookOpen,
   Save,
-  Upload,
   FileCode,
   Palette,
   Pencil,
@@ -12,11 +11,30 @@ import {
   X,
   Loader2,
   CheckCircle2,
+  Eye,
+  LayoutTemplate,
+  Sparkles,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
+import { renderPreviewDocument } from "@/lib/copy-injection";
 import { TemplateRecord } from "@/lib/types";
+
+const TEMPLATE_ACCENTS = [
+  { gradient: "from-violet-500/20 via-fuchsia-500/10 to-transparent", border: "border-violet-500/20" },
+  { gradient: "from-cyan-500/20 via-blue-500/10 to-transparent", border: "border-cyan-500/20" },
+  { gradient: "from-amber-500/20 via-orange-500/10 to-transparent", border: "border-amber-500/20" },
+  { gradient: "from-emerald-500/20 via-teal-500/10 to-transparent", border: "border-emerald-500/20" },
+  { gradient: "from-rose-500/20 via-pink-500/10 to-transparent", border: "border-rose-500/20" },
+] as const;
 
 export function CopyInjectionTemplateTrainer() {
   const [templates, setTemplates] = useState<TemplateRecord[]>([]);
@@ -29,6 +47,7 @@ export function CopyInjectionTemplateTrainer() {
   const [isSaving, setIsSaving] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState<string | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   useEffect(() => {
     fetch("/api/agents/copy-injection/templates")
@@ -71,6 +90,7 @@ export function CopyInjectionTemplateTrainer() {
     setHtmlScaffold(template.html_scaffold ?? "");
     setCssScaffold(template.css_scaffold ?? "");
     setStatus(`Editing "${template.name}". Make changes and click Update.`);
+    setDrawerOpen(false);
   };
 
   const clearForm = () => {
@@ -151,8 +171,128 @@ export function CopyInjectionTemplateTrainer() {
     }
   };
 
+  const previewSrcDoc = renderPreviewDocument(
+    htmlScaffold.trim() || "<div class='placeholder'><p>Add HTML scaffold to see preview</p></div>",
+    cssScaffold.trim() ||
+      ".placeholder { padding: 2rem; text-align: center; color: #666; font-family: system-ui; }",
+  );
+
   return (
-    <div className="grid gap-6 lg:grid-cols-[1fr_380px]">
+    <div className="relative">
+      {/* Floating Templates Button */}
+      <Sheet open={drawerOpen} onOpenChange={setDrawerOpen}>
+        <SheetTrigger asChild>
+          <Button
+            variant="default"
+            size="lg"
+            className="fixed right-8 top-8 z-40 gap-2 shadow-lg shadow-primary/20 transition-all hover:scale-105 hover:shadow-xl hover:shadow-primary/25"
+          >
+            <LayoutTemplate className="size-5" />
+            Templates
+            {templates.length > 0 && (
+              <span className="flex size-5 items-center justify-center rounded-full bg-white/20 text-xs font-semibold">
+                {templates.length}
+              </span>
+            )}
+          </Button>
+
+        </SheetTrigger>
+        <SheetContent
+          side="right"
+          className="w-full border-l-0 bg-gradient-to-b from-background to-muted/30 sm:max-w-lg"
+          showCloseButton={true}
+        >
+          <SheetHeader className="border-b border-border/60 pb-4">
+            <SheetTitle className="flex items-center gap-2 text-xl">
+              <div className="flex size-10 items-center justify-center rounded-xl bg-gradient-to-br from-primary/20 to-primary/5">
+                <Sparkles className="size-5 text-primary" />
+              </div>
+              Saved Templates
+            </SheetTitle>
+            <p className="text-sm text-muted-foreground">
+              {templates.length} template{templates.length !== 1 ? "s" : ""} ready to use
+            </p>
+          </SheetHeader>
+          <div className="flex-1 overflow-auto py-6">
+            {templates.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-center">
+                <div className="rounded-2xl bg-muted/50 p-6">
+                  <BookOpen className="size-14 text-muted-foreground/50" />
+                </div>
+                <p className="mt-4 font-medium text-foreground">No templates yet</p>
+                <p className="mt-1 max-w-xs text-sm text-muted-foreground">
+                  Create a template using the form to get started
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-6"
+                  onClick={() => setDrawerOpen(false)}
+                >
+                  Close
+                </Button>
+              </div>
+            ) : (
+              <div className="space-y-4 pr-2">
+                {templates.map((template, i) => {
+                  const accent = TEMPLATE_ACCENTS[i % TEMPLATE_ACCENTS.length];
+                  return (
+                    <div
+                      key={template.id}
+                      className={`group relative overflow-hidden rounded-2xl border ${accent.border} bg-card p-4 transition-all duration-300 hover:shadow-lg ${
+                        editingId === template.id
+                          ? "ring-2 ring-primary/50"
+                          : "hover:-translate-y-0.5"
+                      }`}
+                    >
+                      <div
+                        className={`absolute inset-0 bg-gradient-to-br ${accent.gradient} opacity-0 transition-opacity duration-300 group-hover:opacity-100`}
+                      />
+                      <div className="relative">
+                        <h4 className="font-semibold tracking-tight text-foreground">
+                          {template.name}
+                        </h4>
+                        {template.description ? (
+                          <p className="mt-1.5 line-clamp-2 text-sm text-muted-foreground">
+                            {template.description}
+                          </p>
+                        ) : null}
+                        <div className="mt-4 flex gap-2">
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => loadTemplateIntoForm(template)}
+                            className="gap-1.5"
+                          >
+                            <Pencil className="size-3.5" />
+                            Edit
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleDelete(template)}
+                            disabled={isDeleting === template.id}
+                            className="gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                          >
+                            {isDeleting === template.id ? (
+                              <Loader2 className="size-3.5 animate-spin" />
+                            ) : (
+                              <Trash2 className="size-3.5" />
+                            )}
+                            Delete
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      <div className="grid gap-6 lg:grid-cols-2">
       <section className="overflow-hidden rounded-xl border border-border/60 bg-card shadow-sm">
         <div className="border-b border-border/60 bg-muted/30 px-6 py-4">
           <div className="flex items-center gap-3">
@@ -286,75 +426,27 @@ export function CopyInjectionTemplateTrainer() {
         </div>
       </section>
 
+      {/* Live Preview */}
       <section className="overflow-hidden rounded-xl border border-border/60 bg-card shadow-sm">
-        <div className="border-b border-border/60 bg-muted/30 px-6 py-4">
-          <h2 className="text-lg font-semibold tracking-tight">
-            Saved Templates
+        <div className="flex items-center justify-between border-b border-border/60 bg-muted/30 px-6 py-4">
+          <h2 className="flex items-center gap-2 text-lg font-semibold tracking-tight">
+            <Eye className="size-5" />
+            Live Preview
           </h2>
-          <p className="mt-0.5 text-sm text-muted-foreground">
-            {templates.length} template{templates.length !== 1 ? "s" : ""}
-          </p>
+          <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+            Live
+          </span>
         </div>
-        <div className="max-h-[calc(100vh-280px)] overflow-auto p-4">
-          {templates.length === 0 ? (
-            <div className="flex flex-col items-center py-12 text-center">
-              <BookOpen className="size-12 text-muted-foreground/40" />
-              <p className="mt-3 text-sm text-muted-foreground">
-                No templates yet
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Create one to get started
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {templates.map((template) => (
-                <div
-                  key={template.id}
-                  className={`rounded-lg border p-4 transition-colors ${
-                    editingId === template.id
-                      ? "border-primary/50 bg-primary/5"
-                      : "border-border/60 hover:bg-muted/30"
-                  }`}
-                >
-                  <p className="font-medium">{template.name}</p>
-                  {template.description ? (
-                    <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
-                      {template.description}
-                    </p>
-                  ) : null}
-                  <div className="mt-3 flex gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => loadTemplateIntoForm(template)}
-                      disabled={!!editingId && editingId !== template.id}
-                      className="gap-1.5"
-                    >
-                      <Pencil className="size-3.5" />
-                      Edit
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleDelete(template)}
-                      disabled={isDeleting === template.id}
-                      className="gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                    >
-                      {isDeleting === template.id ? (
-                        <Loader2 className="size-3.5 animate-spin" />
-                      ) : (
-                        <Trash2 className="size-3.5" />
-                      )}
-                      {isDeleting === template.id ? "Deleting..." : "Delete"}
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+        <div className="p-3">
+          <iframe
+            title="template-preview"
+            className="h-[min(70vh,600px)] w-full rounded-lg border border-border/60 bg-white shadow-inner dark:bg-zinc-900"
+            sandbox="allow-same-origin allow-scripts"
+            srcDoc={previewSrcDoc}
+          />
         </div>
       </section>
+      </div>
     </div>
   );
 }
