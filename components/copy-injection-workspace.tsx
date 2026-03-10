@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { renderPreviewDocument } from "@/lib/copy-injection";
+import { htmlToMarkerFormat } from "@/lib/format-section-content";
 import { readUiMessageSseStream, UiStreamChunk } from "@/lib/read-ui-stream";
 import {
   FunnelListItem,
@@ -67,6 +68,7 @@ export function CopyInjectionWorkspace() {
   const [isTraining, setIsTraining] = useState(false);
   const [generationTrace, setGenerationTrace] = useState<string[]>([]);
 
+  const objectiveTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const currentFunnel = fullFunnel;
 
   useEffect(() => {
@@ -349,9 +351,27 @@ export function CopyInjectionWorkspace() {
               placeholder="Funnel name"
             />
             <textarea
+              ref={objectiveTextareaRef}
               className="min-h-24 w-full rounded-md border bg-background p-3 text-sm"
               value={objective}
               onChange={(event) => setObjective(event.target.value)}
+              onPaste={(e) => {
+                const html = e.clipboardData?.getData("text/html");
+                if (html) {
+                  e.preventDefault();
+                  const converted = htmlToMarkerFormat(html);
+                  const ta = objectiveTextareaRef.current;
+                  const start = ta?.selectionStart ?? objective.length;
+                  const end = ta?.selectionEnd ?? objective.length;
+                  const next =
+                    objective.slice(0, start) + converted + objective.slice(end);
+                  setObjective(next);
+                  requestAnimationFrame(() => {
+                    const pos = start + converted.length;
+                    ta?.setSelectionRange(pos, pos);
+                  });
+                }
+              }}
               placeholder="Objective and offer details"
             />
             <textarea

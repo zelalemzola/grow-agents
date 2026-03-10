@@ -13,7 +13,11 @@ import {
   replacePlaceholdersInHtml,
   getPlaceholderContext,
 } from "@/lib/media-placeholders";
-import { formatSectionPlanContentForHtml } from "@/lib/format-section-content";
+import {
+  formatSectionPlanContentForHtml,
+  injectContentFromCopy,
+  splitCopyIntoParagraphs,
+} from "@/lib/format-section-content";
 import { buildVisualDescription } from "@/lib/image-prompt-builder";
 import {
   agent1PromptContext,
@@ -123,51 +127,58 @@ async function runGeneration(
   // Knowledge base disabled for now to reduce latency - use built-in guidelines only
   const copyContext = agent1PromptContext([], "copy");
 
+  let paragraphs = splitCopyIntoParagraphs(parsedData.objective);
+  if (paragraphs.length === 0 && parsedData.objective.trim()) {
+    paragraphs = [parsedData.objective.trim()];
+  }
+  const paragraphPreview =
+    paragraphs.length > 0
+      ? paragraphs
+          .map((p, i) => `Paragraph ${i}: ${p.slice(0, 150)}${p.length > 150 ? "..." : ""}`)
+          .join("\n")
+      : `Paragraph 0: ${parsedData.objective.slice(0, 200)}`;
+
   emit({
     type: "status",
-    message: "Planning funnel sections.",
+    message: "Planning funnel sections (structure + paragraph mapping).",
   });
   const sectionPlanResult = await generateObject({
     model: gateway("openai/gpt-4.1-mini"),
     schema: sectionPlanSchema,
     system: FUNNEL_GENERATION_EXTRA_SYSTEM_PROMPT,
-    maxOutputTokens: 32768,
+    maxOutputTokens: 65536,
     prompt: `${copyContext}
 
 You are a senior direct-response funnel architect.
 
-Produce a detailed section plan for a high-converting funnel landing page.
-You MUST map content into conversion-oriented sections in logical order.
-Keep copy assertive but realistic and policy-safe.
+Produce a section plan that maps the copy into funnel sections. **CRITICAL:** You output STRUCTURE + paragraphIndices only. Content is injected from the user's copy—you must assign paragraphIndices so every paragraph appears. Zero content loss.
 
-**ZERO OMISSION - NON-NEGOTIABLE:** Use the COMPLETE advertorial copy exactly as provided. NOT A SINGLE LINE may be added or removed. The VERY FIRST line MUST appear—do NOT skip it. Every headline, paragraph, list item, review, testimonial, disclaimer, and footnote must appear verbatim and unchanged. NEVER summarize, condense, omit, skip, or paraphrase. If the copy has 30 paragraphs, output 30. If it has 12 reviews, output 12. Preserve 100% of the text—word for word. The user may include [image] or [gif]; keep those markers exactly where they appear. Generate media ONLY at those placeholder positions. Do NOT invent or add content that is not in the copy.
+**PARAGRAPH MAPPING (MANDATORY):** The copy is split into ${paragraphs.length} paragraphs (0-indexed). For each section, output paragraphIndices: an array of paragraph numbers. EVERY paragraph 0 through ${Math.max(0, paragraphs.length - 1)} MUST be assigned to exactly one section. No paragraph may be skipped. Paragraph 0 is usually the headline. Assign in reading order.
 
-ADAPT TO COPY LENGTH: The user's objective/copy may be longer or shorter than any template. Create as many sections as the content warrants—do NOT pad short copy with filler or cram long copy into few sections. Long copy → more body/proof sections (6-10+). Short copy → fewer sections (1-3 body). The template defines layout style, not a fixed section count. Every piece of substantive content should get its own section where appropriate.
+**TEMPLATE 100%:** Follow the selected template's structure exactly—same section types, class names, layout. The template defines the visual style.
 
 Funnel name: ${parsedData.funnelName}
-Objective: ${parsedData.objective}
 Campaign context: ${parsedData.campaignContext ?? "N/A"}
 Template instructions: ${template?.instructions ?? "No template instructions provided"}
 
-${(() => {
-    const firstLine = (parsedData.objective.split(/\r?\n/)[0] ?? "").trim();
-    return firstLine ? `**FIRST LINE CHECK:** The first line is: "${firstLine.slice(0, 200)}${firstLine.length > 200 ? "..." : ""}" — MUST appear in your output (headline or hook). Do NOT skip it.\n\n` : "";
-  })()}
-For each section include:
-- id (short slug e.g. hero-headline, social-proof-1)
-- type
+**Numbered paragraphs (assign each index 0..${Math.max(0, paragraphs.length - 1)} to a section):**
+${paragraphPreview}
+
+For each section output:
+- id (short slug: hero-headline, body-1, testimonial-1, etc.)
+- type (headline, hook, body, cta, testimonial, faq, image, proof)
 - title
-- content: MUST use HTML formatting. <br><br> between paragraphs, <br> for line breaks, <b> for bold/key phrases, <i> for italic/quotes. Apply proper spacing—no wall-of-text. Vary rhythm with breaks. Never output raw paragraphs or \\n.
-- ctaLabel (string when relevant, otherwise null)
-- imagePrompt: A concrete 1-2 sentence visual description for this section's image. MUST directly illustrate this section's content. Follow advertorial rules: editorial, candid, no text/logos. Headline images create curiosity without revealing the solution. Body images explain the single core idea. Be specific to the copy.
-- preferGif: Per the IMAGE GUIDELINE "When to Use Animation" rules. Set TRUE when: (a) HEADLINE implies process, transformation, hidden cause, before/after, or change over time; (b) BODY explains mechanism, digestion, absorption, delivery path, how-it-works, or cause-and-effect over time; (c) PRODUCT section shows mechanism, delivery, or absorption. Set FALSE for: static testimonials, FAQs, simple hero hooks with no process, pure comparison tables, or when a frozen moment creates stronger tension. DEFAULT to true for body and product sections that explain processes.
+- content: empty string or placeholder—replaced from copy via paragraphIndices
+- paragraphIndices: array of 0-based indices. REQUIRED. Every index 0..${Math.max(0, paragraphs.length - 1)} must appear in exactly one section.
+- ctaLabel (when relevant, else null)
+- imagePrompt: 1-2 sentence visual for this section. Editorial, candid, no text/logos.
+- preferGif: true for process/mechanism; false for testimonials, FAQs
 
-Examples: "how it enters the bloodstream" → preferGif: true; "digestion over 24 hours" → preferGif: true; "Scientists discover what happens inside your gut" → preferGif: true; testimonial quote → preferGif: false; FAQ "How do I take it?" → preferGif: false.
-
-Important: every section object MUST include ctaLabel, imagePrompt, and preferGif. imagePrompt must be content-specific, not generic. Follow the image guideline—use GIF/animation wherever it improves credibility and comprehension.`,
+Create enough sections so all ${paragraphs.length} paragraphs are assigned. Follow template structure.`,
   });
 
   const sectionPlan = sectionPlanResult.object;
+  injectContentFromCopy(sectionPlan.sections, parsedData.objective);
   formatSectionPlanContentForHtml(sectionPlan.sections);
   emit({
     type: "reasoning",
@@ -323,7 +334,7 @@ ${testimonialImageBlock}
 - Do not paste raw unformatted text—no wall-of-text. Apply tags based on structure.
 **COMPLETE OUTPUT:** You MUST output the FULL HTML with EVERY section from the plan. Never truncate, abbreviate, or skip sections—no matter how long. Use semantic HTML. No markdown fences.
 
-**TEMPLATE STYLING - EXTEND OR CONDENSE:** The selected template defines the visual style. Your output must completely resemble it. When content is LARGER than the template example: add more sections using the SAME class names, structure, and styling patterns. When content is SMALLER: use fewer sections but the SAME styling. The funnel must look identical to the template in colors, typography, spacing, layout, and structure—only the amount of content varies. Use the template's class names and HTML structure.
+**TEMPLATE 100% - EXACT RESEMBLANCE:** The selected template defines EVERYTHING. Your output must look identical to it: same class names, same HTML structure, same layout, same structure. When content is LARGER: add more sections using the SAME patterns. When SMALLER: fewer sections, SAME styling. Colors, typography, spacing—all from the template. Only the text content varies. Use the template's exact class names and markup.
 
 ADAPTIVE LAYOUT:
 - If the section plan has MORE sections than the template shows, extend the layout with the same patterns. If FEWER, condense. Every section in the plan must appear.
@@ -425,15 +436,61 @@ Template HTML scaffold (full HTML structure to follow): ${templateHtmlScaffold}`
     return results;
   }
 
-  emit({ type: "status", message: "Generating HTML..." });
-  const htmlResult = await generateObject({
-    model: gateway("openai/gpt-4.1"),
-    schema: htmlOnlySchema,
-    system: FUNNEL_GENERATION_EXTRA_SYSTEM_PROMPT,
-    prompt: htmlPrompt,
-    maxOutputTokens: 32768,
-  });
-  const htmlRaw = htmlResult.object.html;
+  const HTML_CHUNK_THRESHOLD = 8;
+  const HTML_CHUNK_SIZE = 6;
+  const HTML_MAX_TOKENS = 65536;
+
+  let htmlRaw: string;
+
+  if (sectionPlan.sections.length > HTML_CHUNK_THRESHOLD) {
+    emit({ type: "status", message: `Generating HTML in chunks (${sectionPlan.sections.length} sections)...` });
+    const batches: typeof sectionPlan.sections[] = [];
+    for (let i = 0; i < sectionPlan.sections.length; i += HTML_CHUNK_SIZE) {
+      batches.push(sectionPlan.sections.slice(i, i + HTML_CHUNK_SIZE));
+    }
+    const htmlParts: string[] = [];
+    for (let b = 0; b < batches.length; b++) {
+      const batch = batches[b];
+      emit({ type: "status", message: `Generating HTML chunk ${b + 1}/${batches.length}...` });
+      const batchJson = JSON.stringify({ sections: batch }, null, 2);
+      const batchHasTestimonials = batch.some((s) => s.type === "testimonial");
+      const batchTestimonialBlock = batchHasTestimonials
+        ? `\n**TESTIMONIAL IMAGES:** For testimonial sections, add: <img src="{{image:section-id}}" alt="" class="funnel-media" style="width:100%;max-width:100%;height:auto;display:block;border-radius:12px;" /> using the section id (e.g. {{image:testimonial-1}}).\n`
+        : "";
+      const batchPrompt = `${copyContext}
+
+You are an expert HTML funnel builder. Output ONLY the HTML for these ${batch.length} sections. No <html>, <head>, <body>. Just the section elements.
+${placeholderBlock}
+${batchTestimonialBlock}
+**EXACT COPY:** Output the section content EXACTLY as provided. No truncation, no omission.
+**TEMPLATE 100%:** Use the SAME class names and structure as the template. Match its styling.
+
+Template HTML scaffold: ${templateHtmlScaffold}
+
+Sections to render:
+${batchJson}`;
+
+      const batchResult = await generateObject({
+        model: gateway("openai/gpt-4.1"),
+        schema: htmlOnlySchema,
+        system: FUNNEL_GENERATION_EXTRA_SYSTEM_PROMPT,
+        prompt: batchPrompt,
+        maxOutputTokens: HTML_MAX_TOKENS,
+      });
+      htmlParts.push((batchResult.object.html ?? "").trim());
+    }
+    htmlRaw = htmlParts.join("\n\n");
+  } else {
+    emit({ type: "status", message: "Generating HTML..." });
+    const htmlResult = await generateObject({
+      model: gateway("openai/gpt-4.1"),
+      schema: htmlOnlySchema,
+      system: FUNNEL_GENERATION_EXTRA_SYSTEM_PROMPT,
+      prompt: htmlPrompt,
+      maxOutputTokens: HTML_MAX_TOKENS,
+    });
+    htmlRaw = htmlResult.object.html;
+  }
 
   let html = mediaPlaceholders.length > 0
     ? replacePlaceholdersInHtml(htmlRaw, mediaPlaceholders)
@@ -514,7 +571,7 @@ ${templateCssScaffold}
     schema: cssOnlySchema,
     system: FUNNEL_GENERATION_EXTRA_SYSTEM_PROMPT,
     prompt: cssPrompt,
-    maxOutputTokens: 32768,
+    maxOutputTokens: 65536,
   });
   let css = (cssResult.object.css ?? "").trim().replace(/^```(?:css)?\s*\n?|```\s*$/gm, "").trim();
 

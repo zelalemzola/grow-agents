@@ -29,6 +29,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { createPreviewSrcDoc, injectImagesIntoHtml } from "@/lib/funnel-preview";
 import { renderDocumentWithCssLink } from "@/lib/copy-injection";
+import { htmlToMarkerFormat } from "@/lib/format-section-content";
 import { readUiMessageSseStream, UiStreamChunk } from "@/lib/read-ui-stream";
 import {
   FunnelListItem,
@@ -88,6 +89,7 @@ export function CopyInjectionProjectEditor({
 
   const htmlTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const cssTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const objectiveTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const pendingHighlightRef = useRef<{
     type: "html" | "css";
     startIndex: number;
@@ -737,9 +739,27 @@ export function CopyInjectionProjectEditor({
             Prompting Panel
           </h2>
           <textarea
+            ref={objectiveTextareaRef}
             className="mt-3 min-h-24 w-full rounded-lg border border-input bg-background px-3 py-2.5 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
             value={objective}
             onChange={(event) => setObjective(event.target.value)}
+            onPaste={(e) => {
+              const html = e.clipboardData?.getData("text/html");
+              if (html) {
+                e.preventDefault();
+                const converted = htmlToMarkerFormat(html);
+                const ta = objectiveTextareaRef.current;
+                const start = ta?.selectionStart ?? objective.length;
+                const end = ta?.selectionEnd ?? objective.length;
+                const next =
+                  objective.slice(0, start) + converted + objective.slice(end);
+                setObjective(next);
+                requestAnimationFrame(() => {
+                  const pos = start + converted.length;
+                  ta?.setSelectionRange(pos, pos);
+                });
+              }
+            }}
             placeholder="Describe the funnel objective and offer..."
           />
           <textarea

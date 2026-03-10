@@ -18,6 +18,8 @@ export const sectionPlanSchema = z.object({
       ]),
       title: z.string(),
       content: z.string(),
+      /** 0-based paragraph indices from the raw copy. When non-empty, content is INJECTED from copy (overwrites content). Every paragraph 0..N-1 must be assigned to exactly one section. Use [] for sections with no copy (e.g. image-only). */
+      paragraphIndices: z.array(z.number()),
       ctaLabel: z.string().nullable(),
       imagePrompt: z.string().nullable(),
       /** When true, per image guideline: use GIF/animation (process, mechanism, transformation). Required for strict response_format. */

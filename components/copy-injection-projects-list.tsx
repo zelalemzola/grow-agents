@@ -190,14 +190,11 @@ export function CopyInjectionProjectsList() {
           {filteredFunnels.map((funnel, i) => {
             const accent = ACCENT_PALETTE[i % ACCENT_PALETTE.length];
             return (
-              <div
+              <Link
                 key={funnel.id}
-                className="group relative overflow-hidden rounded-2xl border border-border/60 bg-card p-5 shadow-sm transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5"
+                href={`/agents/copy-injection/projects/${funnel.id}`}
+                className="group relative block overflow-hidden rounded-2xl border border-border/60 bg-card p-5 shadow-sm transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5 hover:border-primary/30"
               >
-                <Link
-                  href={`/agents/copy-injection/projects/${funnel.id}`}
-                  className="absolute inset-0 z-0"
-                />
                 <div
                   className={`absolute inset-0 bg-gradient-to-br ${accent.gradient} opacity-0 transition-opacity duration-300 group-hover:opacity-100`}
                 />
@@ -207,8 +204,13 @@ export function CopyInjectionProjectsList() {
                     <Button
                       variant="ghost"
                       size="icon"
+                      type="button"
                       className="size-8 text-muted-foreground opacity-60 hover:bg-destructive/10 hover:text-destructive hover:opacity-100"
-                      onClick={(e) => handleDelete(e, funnel)}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        handleDelete(e, funnel);
+                      }}
                       disabled={deletingId === funnel.id}
                       title="Delete project"
                     >
@@ -238,7 +240,7 @@ export function CopyInjectionProjectsList() {
                     <ArrowRight className="size-4" />
                   </span>
                 </div>
-              </div>
+              </Link>
             );
           })}
         </div>
