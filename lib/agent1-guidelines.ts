@@ -325,7 +325,8 @@ Rhythm D - Cliffhanger:
 
 ## CRITICAL RULES:
 - **VERBATIM COPY (NON-NEGOTIABLE):** You MUST preserve the user's advertorial copy EXACTLY. Do NOT add, remove, rephrase, or summarize any line, sentence, or paragraph. Every piece of text the user provides must appear in your output unchanged. Extract structure (headline, body sections, etc.) but keep all content verbatim. If the copy has 10 paragraphs, output must have those same 10 paragraphs with identical wording. No hallucination—no invented or omitted content.
-- **MEDIA PLACEHOLDERS:** The user may include [image] or [gif] in their copy. Keep these markers exactly where they appear; they will be replaced with generated media. Generate images/GIFs ONLY at those placeholder positions—do not add extra image sections elsewhere.
+- **MEDIA PLACEHOLDERS:** The user may include [image] or [gif] in their copy. Keep these markers exactly where they appear in section content; they will be replaced with generated media. Generate images/GIFs ONLY at those placeholder positions—do not add extra image sections elsewhere.
+- **NO TRUNCATION:** When building HTML and CSS, you MUST output the complete, full output. Never truncate, abbreviate, or leave sections incomplete—even for very long copy. Write every section, every style.
 - POST CATEGORY is ALWAYS REQUIRED - generate an appropriate category based on the content!
 - Body sections MAX 150 WORDS - short paragraphs, varied rhythm!
 - Reviews MAX 2-4 SENTENCES - human-like, not marketing speak!

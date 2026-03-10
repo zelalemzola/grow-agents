@@ -2,15 +2,11 @@ import {
   createUIMessageStream,
   createUIMessageStreamResponse,
   generateObject,
-  streamObject,
 } from "ai";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import {
-  htmlCssSchema,
-  sectionPlanSchema,
-} from "@/lib/copy-injection";
+import { sectionPlanSchema } from "@/lib/copy-injection";
 import { classifyIsProductSection } from "@/lib/classify-product-section";
 import {
   parseMediaPlaceholders,
@@ -134,6 +130,7 @@ async function runGeneration(
     model: gateway("openai/gpt-4.1-mini"),
     schema: sectionPlanSchema,
     system: FUNNEL_GENERATION_EXTRA_SYSTEM_PROMPT,
+    maxOutputTokens: 16384,
     prompt: `${copyContext}
 
 You are a senior direct-response funnel architect.
@@ -220,10 +217,20 @@ Important: every section object MUST include ctaLabel, imagePrompt, and preferGi
         )
       : imageCandidatesBase.map((c) => ({ ...c, isProductSection: false }));
 
+  const defaultProductGuidelines =
+    productImageBase64.length > 0
+      ? "Based on section content: show either people holding and using the product, or a doctor holding/recommending it. For testimonials: show happy people holding the product as described in the testimonial."
+      : "";
+
+  const productGuidelinesFinal =
+    [defaultProductGuidelines, parsedData.productGuidelines?.trim()]
+      .filter(Boolean)
+      .join("\n\n") || undefined;
+
   const funnelContext = {
     objective: parsedData.objective,
     pageName: sectionPlan.pageName,
-    productGuidelines: parsedData.productGuidelines?.trim() || undefined,
+    productGuidelines: productGuidelinesFinal,
     sectionSummaries: sectionPlan.sections.map((s) => ({
       id: s.id,
       title: s.title,
@@ -240,52 +247,51 @@ Important: every section object MUST include ctaLabel, imagePrompt, and preferGi
     },
   });
 
-  const htmlCssPrompt = `${copyContext}
+  const placeholderIdList =
+    mediaPlaceholders.length > 0
+      ? mediaPlaceholders.map((p) => p.id).join(", ")
+      : "";
 
-You are an expert HTML/CSS funnel builder.
+  const sectionPlanJson = JSON.stringify(sectionPlan, null, 2);
+  const templateInstructions = template?.instructions ?? "No strict template guidance. Use clean modern conversion layout.";
+  const templateHtmlScaffold = template?.html_scaffold ?? "N/A";
+  const templateCssScaffold = template?.css_scaffold ?? "N/A";
 
-Goal:
-- Build a complete landing page from this section plan.
-- Preserve structure and conversion flow.
-- Keep CSS maintainable and scoped.
-- Use semantic HTML.
-- **Preserve [image] and [gif] in the HTML exactly where they appear in the content**—they will be replaced with generated media. Do not add image placeholders elsewhere.
-- Do not include markdown fences.
+  const htmlOnlySchema = z.object({ html: z.string() });
+  const cssOnlySchema = z.object({ css: z.string() });
 
-**CSS IS REQUIRED:** You MUST always output complete, full CSS for the entire page. No matter how long the HTML is, the \`css\` field must be complete and never empty or truncated. Every section and element in your HTML must have corresponding styles in the \`css\` field.
+  const htmlPrompt = `${copyContext}
 
-ADAPTIVE LAYOUT (CRITICAL):
-- The template scaffold shows the desired UI flow, typography, and visual style—NOT a rigid structure.
-- If the section plan has MORE sections than the template shows (e.g. 8 body sections vs 4), extend/repeat the layout pattern. Add more body blocks, testimonials, or proof sections as needed. Preserve the template's look and feel.
-- If the section plan has FEWER sections, condense the layout. Do NOT leave empty placeholders or unused template structure.
-- Match the output structure exactly to the sections in the plan. Every section in the plan must appear in the HTML; no extra or missing sections.
+You are an expert HTML funnel builder. Output ONLY the HTML for the landing page body (no <html>, <head>, or <body>—just the inner content).
 
-UI/LAYOUT REQUIREMENTS (critical for conversion):
-- Mobile-first responsive: readable on small screens, scales up for desktop.
-- Clean typography: readable font sizes (min 16px body), clear hierarchy (headings vs body).
-- Generous whitespace: avoid cramped sections; use padding/margin for breathing room.
-- Full-width sections with max-width content containers for readability.
-- CTAs: prominent buttons with clear contrast, adequate touch targets.
-- Images: use object-fit: cover, sensible aspect ratios, no distorted visuals.
+**CRITICAL - [image] and [gif] placeholders:**
+Where section content contains [image] or [gif], replace with: <img src="{{image:ID}}" alt="" class="funnel-media" style="width:100%;max-width:100%;height:auto;display:block;border-radius:12px;" />
+IDs in order: ${placeholderIdList || "image-1, gif-1, etc."} Do NOT output literal "[image]" or "[gif]".
 
-Section Plan JSON:
-${JSON.stringify(sectionPlan, null, 2)}
+**COMPLETE OUTPUT:** You MUST output the FULL HTML. Never truncate—write every section. Use semantic HTML. No markdown fences.
 
-Template guidance:
-${template?.instructions ?? "No strict template guidance. Use clean modern conversion layout."}
+ADAPTIVE LAYOUT:
+- If the section plan has MORE sections than the template shows, extend the layout. If FEWER, condense. Every section in the plan must appear.
+- Mobile-first, clean typography, generous whitespace, full-width sections with max-width containers, prominent CTAs.
 
-Template HTML scaffold:
-${template?.html_scaffold ?? "N/A"}
+Section Plan:
+${sectionPlanJson}
 
-Template CSS scaffold:
-${template?.css_scaffold ?? "N/A"}`;
+Template guidance: ${templateInstructions}
+Template HTML scaffold: ${templateHtmlScaffold}`;
 
-  const { partialObjectStream, object: htmlCssObject } = streamObject({
-    model: gateway("openai/gpt-4.1"),
-    schema: htmlCssSchema,
-    system: FUNNEL_GENERATION_EXTRA_SYSTEM_PROMPT,
-    prompt: htmlCssPrompt,
-  });
+  const cssPrompt = `${copyContext}
+
+You are an expert CSS author. Output ONLY the full CSS for this funnel landing page. Target the sections and elements from the section plan. Every section and element must have styles.
+
+**COMPLETE OUTPUT:** You MUST output the FULL CSS. Never truncate—write every rule. No markdown fences.
+
+Requirements: Mobile-first, clean typography, generous whitespace. Style .funnel-media (images), CTAs, sections, headings.
+
+Section Plan (for element/class names):
+${sectionPlanJson}
+
+Template CSS scaffold: ${templateCssScaffold}`;
 
   const { generateFunnelMedia } = await import("@/lib/generate-funnel-media");
   const { getImageModel } = await import("@/lib/image-model");
@@ -362,29 +368,41 @@ ${template?.css_scaffold ?? "N/A"}`;
     return results;
   }
 
-  const htmlCssTask = (async () => {
-    for await (const partial of partialObjectStream) {
-      if (typeof partial.html === "string" && partial.html.length > 0) {
-        emit({ type: "html-stream", payload: { value: partial.html } });
-      }
-      if (typeof partial.css === "string" && partial.css.length > 0) {
-        emit({ type: "css-stream", payload: { value: partial.css } });
-      }
-    }
-    return htmlCssObject;
-  })();
+  const htmlTask = generateObject({
+    model: gateway("openai/gpt-4.1"),
+    schema: htmlOnlySchema,
+    system: FUNNEL_GENERATION_EXTRA_SYSTEM_PROMPT,
+    prompt: htmlPrompt,
+    maxOutputTokens: 16384,
+  }).then((r) => {
+    emit({ type: "html-stream", payload: { value: r.object.html } });
+    return r.object.html;
+  });
 
-  const [htmlCssResult, imageResults] = await Promise.all([
-    htmlCssTask,
-    runWithConcurrencyLimit(imageCandidates, IMAGE_CONCURRENCY, generateImageForSection),
-  ]);
+  const cssTask = generateObject({
+    model: gateway("openai/gpt-4.1"),
+    schema: cssOnlySchema,
+    system: FUNNEL_GENERATION_EXTRA_SYSTEM_PROMPT,
+    prompt: cssPrompt,
+    maxOutputTokens: 16384,
+  }).then((r) => {
+    emit({ type: "css-stream", payload: { value: r.object.css } });
+    return r.object.css;
+  });
 
-  let html = htmlCssResult.html;
-  if (mediaPlaceholders.length > 0) {
-    html = replacePlaceholdersInHtml(html, mediaPlaceholders);
-  }
+  const imageTask = runWithConcurrencyLimit(
+    imageCandidates,
+    IMAGE_CONCURRENCY,
+    generateImageForSection,
+  );
 
-  let css = (htmlCssResult.css ?? "").trim();
+  const [htmlRaw, cssRaw, imageResults] = await Promise.all([htmlTask, cssTask, imageTask]);
+
+  let html = mediaPlaceholders.length > 0
+    ? replacePlaceholdersInHtml(htmlRaw, mediaPlaceholders)
+    : htmlRaw;
+  let css = (cssRaw ?? "").trim();
+
   if (css.length < 50) {
     css = `* { box-sizing: border-box; }
 body { margin: 0; font-family: system-ui, sans-serif; line-height: 1.5; color: #1a1a1a; background: #fff; }

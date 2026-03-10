@@ -185,7 +185,8 @@ export function CopyInjectionTemplateTrainer() {
           <Button
             variant="default"
             size="lg"
-            className="fixed right-8 top-8 z-40 gap-2 shadow-lg shadow-primary/20 transition-all hover:scale-105 hover:shadow-xl hover:shadow-primary/25"
+            className="fixed right-8
+             top-8 z-40 gap-2 shadow-lg shadow-primary/20 transition-all hover:scale-105 hover:shadow-xl hover:shadow-primary/25"
           >
             <LayoutTemplate className="size-5" />
             Templates

@@ -10,9 +10,8 @@ export interface MediaPlaceholder {
   id: string;
 }
 
-const IMAGE_MARKER = "[image]";
-const GIF_MARKER = "[gif]";
-const REGEX = /\[image\]|\[gif\]/g;
+/** Matches [image], [gif], or with optional spaces e.g. [ image ], [ gif ] */
+const PARSE_REGEX = /\[\s*image\s*\]|\[\s*gif\s*\]/gi;
 
 /**
  * Returns placeholders in order of appearance in the copy.
@@ -23,9 +22,9 @@ export function parseMediaPlaceholders(objective: string): MediaPlaceholder[] {
   let imageCount = 0;
   let gifCount = 0;
   let m: RegExpExecArray | null;
-  REGEX.lastIndex = 0;
-  while ((m = REGEX.exec(objective)) !== null) {
-    if (m[0] === IMAGE_MARKER) {
+  PARSE_REGEX.lastIndex = 0;
+  while ((m = PARSE_REGEX.exec(objective)) !== null) {
+    if (/image/i.test(m[0])) {
       imageCount += 1;
       out.push({ type: "image", id: `image-${imageCount}` });
     } else {
@@ -36,8 +35,12 @@ export function parseMediaPlaceholders(objective: string): MediaPlaceholder[] {
   return out;
 }
 
+/** Flexible regex: [image], [gif], or with optional spaces */
+const PLACEHOLDER_REGEX = /\[\s*image\s*\]|\[\s*gif\s*\]/gi;
+
 /**
- * Replaces [image] and [gif] in html in order with {{image:id}}.
+ * Replaces [image] and [gif] in html in order with proper img tags
+ * that use {{image:id}} so the preview can inject generated media.
  * Must be called with the same order of placeholders as in the copy.
  */
 export function replacePlaceholdersInHtml(
@@ -46,10 +49,10 @@ export function replacePlaceholdersInHtml(
 ): string {
   if (placeholders.length === 0) return html;
   let index = 0;
-  const replaceRegex = /\[image\]|\[gif\]/g;
-  return html.replace(replaceRegex, () => {
+  return html.replace(PLACEHOLDER_REGEX, () => {
     const p = placeholders[index++];
-    return p ? `{{image:${p.id}}}` : "";
+    if (!p) return "";
+    return `<img src="{{image:${p.id}}}" alt="" class="funnel-media" style="width:100%;max-width:100%;height:auto;display:block;border-radius:12px;" />`;
   });
 }
 
@@ -65,7 +68,7 @@ export function getPlaceholderContext(
   placeholderIndex: number,
   placeholders: MediaPlaceholder[],
 ): string {
-  const parts = objective.split(/(\[image\]|\[gif\])/);
+  const parts = objective.split(/(\[\s*image\s*\]|\[\s*gif\s*\])/i);
   const before = parts[placeholderIndex * 2] ?? "";
   const after = parts[placeholderIndex * 2 + 2] ?? "";
   const combined = (before + " " + after).replace(/\s+/g, " ").trim();

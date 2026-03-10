@@ -431,7 +431,7 @@ export function CopyInjectionWorkspace() {
                 className="mb-2 min-h-14 w-full rounded-md border bg-background p-3 text-sm"
                 value={productGuidelines}
                 onChange={(e) => setProductGuidelines(e.target.value)}
-                placeholder="e.g. Before/after in realtime, doctor in lab recommending..."
+                placeholder="e.g. People holding product, doctor in lab recommending. When product images are uploaded, defaults: people using it or doctor holding it; for testimonials, happy people holding product."
               />
             </div>
             <select

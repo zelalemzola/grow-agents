@@ -59,7 +59,8 @@ export function injectImagesIntoHtml(
       const safeSrc = src.replace(/"/g, "&quot;");
       return makeVideoHtml(safeSrc);
     }
-    return src;
+    const safeSrc = src.replace(/"/g, "&quot;");
+    return `<img src="${safeSrc}" alt="" class="funnel-media" style="width:100%;max-width:100%;height:auto;display:block;border-radius:12px;" />`;
   });
 }
 

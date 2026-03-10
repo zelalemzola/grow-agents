@@ -31,8 +31,8 @@ const visualDescriptionSchema = z.object({
     .describe(
       "Concrete hyperrealistic scene description. Specify: who (people, roles), what is happening, setting, lighting, mood. Must match exactly what the section content describes.",
     ),
-  /** For product sections: scene type to apply targeted style hints */
-  sceneType: sceneTypeSchema.optional(),
+  /** For product sections: scene type to apply targeted style hints. Use null when not a product section. */
+  sceneType: sceneTypeSchema.nullable(),
 });
 
 type SectionType =
@@ -57,8 +57,8 @@ export interface FunnelContextForImage {
 /** Scene-specific style hints for product sections */
 const SCENE_TYPE_HINTS: Record<string, string> = {
   before_after: "Split or side-by-side composition, transformation reveal, realistic before/after, authentic results.",
-  doctor_recommendation: "Doctor or expert in clinical/lab setting, professional but approachable, holding or recommending product.",
-  testimonial_with_product: "Real person, genuine happiness, holding product, candid moment, authentic satisfaction.",
+  doctor_recommendation: "Doctor or expert in clinical/lab setting holding the product, professional but approachable, recommending or demonstrating it. Show the doctor clearly holding the product.",
+  testimonial_with_product: "Happy person holding the product, genuine satisfaction, candid moment. Match the testimonial—show them using or holding the product as described. Real person, authentic feel.",
   product_mechanism: "Clear visual of how product works, mechanism in action, educational and precise.",
   product_intro: "Product clearly visible in context, editorial presentation, not staged advertising.",
   transformation: "Moment of change or result, authentic progress, real-person feel.",
@@ -158,7 +158,8 @@ ${productGuidelinesBlock}
 ${section.preferGif ? "This will be ANIMATED (GIF/video). Describe a moment of transition, process in progress, or cause-effect in motion." : ""}
 ${section.isProductSection ? "This section discusses the product. Describe the scene so the product is clearly incorporated—show it in context. If a product reference image is provided, match that product exactly." : ""}
 
-Task: Write a concrete scene description (2-3 sentences). Specify people, setting, lighting, mood. Be EXACTLY aligned with what the content describes. Output hyperrealistic, photorealistic—like a real photograph.${section.isProductSection ? " Also choose the most fitting sceneType from: before_after, doctor_recommendation, testimonial_with_product, product_mechanism, product_intro, transformation, other." : ""}`;
+Task: Write a concrete scene description (2-3 sentences). Specify people, setting, lighting, mood. Be EXACTLY aligned with what the content describes. Output hyperrealistic, photorealistic—like a real photograph.
+sceneType: ${section.isProductSection ? "Choose the most fitting from: before_after, doctor_recommendation, testimonial_with_product, product_mechanism, product_intro, transformation, other." : "Use null (this is not a product section)."}`;
 
   const result = await generateObject({
     model,
