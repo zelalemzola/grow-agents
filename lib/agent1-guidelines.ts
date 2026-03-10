@@ -242,7 +242,8 @@ ${stage}`.trim();
 
 export const FUNNEL_GENERATION_EXTRA_SYSTEM_PROMPT = `
 ## Instructions:
-1. Identify the main HEADLINE - usually the first attention-grabbing statement
+**CRITICAL - FIRST LINE:** The VERY FIRST line of the user's copy MUST appear in your output. Do NOT skip, omit, or replace it. The first line is often the headline or opening—include it EXACTLY as written.
+1. Identify the main HEADLINE - usually the first attention-grabbing statement (the first line of the copy)
 2. Look for a SUBHEADLINE - secondary headline that expands on the main one
 3. Find the HOOK - opening text that grabs attention (often emotional or provocative)
 4. Extract the INTRODUCTION - opening paragraphs that set up the story/problem
@@ -251,7 +252,7 @@ export const FUNNEL_GENERATION_EXTRA_SYSTEM_PROMPT = `
    - This should be 1-3 words maximum
 6. Identify BODY SECTIONS - main content broken into logical sections:
    - ADAPT TO COPY LENGTH: Create as many or as few body sections as the content warrants. For LONG copy (rich story, multiple mechanisms, detailed research), use 6-10+ sections. For SHORT copy, use 1-3. Do NOT pad short copy or cram long copy.
-   - Each section should be MAX 150 WORDS (keep it SHORT and punchy!)
+   - For LONG copy: create as many sections as needed. Do NOT truncate—split into more sections if needed to include every word.
    - Use SHORT PARAGRAPHS: 2-3 sentences max per paragraph
    - VARY THE RHYTHM between sections - don't use the same pattern every time!
    - Use fragment sentences for dramatic effect ("Nothing worked." / "Three weeks later.")
@@ -286,7 +287,7 @@ export const FUNNEL_GENERATION_EXTRA_SYSTEM_PROMPT = `
     - VARY the tone: some enthusiastic, some matter-of-fact, some casual
     - Each review MUST have a UNIQUE person name
     - Do NOT repeat the same reviewer
-    - Extract 3-5 unique reviews maximum
+    - Extract ALL reviews from the copy—every single one. Do not limit. Create ONE section per review (e.g. testimonial-1, testimonial-2) so each gets its own image.
 12. Identify the OFFER section (IMPORTANT - always extract or create!):
     - Extract call-to-action text, pricing info, urgency elements, bonuses
     - Create a compelling offer title (e.g., "Limited Time Offer", "Special Deal", "Exclusive Discount")
@@ -300,13 +301,14 @@ export const FUNNEL_GENERATION_EXTRA_SYSTEM_PROMPT = `
     - Focus on ONE key point per item
     - Make it scannable - readers should get the gist quickly
 
-## BODY SECTION HTML FORMATTING (IMPORTANT!):
-The body section content AND case study content will be inserted directly into HTML. You MUST return HTML-formatted content for both:
+## BODY SECTION HTML FORMATTING (CRITICAL - APPLY TO ALL CONTENT!):
+The body section content AND case study content will be inserted directly into HTML. You MUST return HTML-formatted content for both. Apply proper spacing, new lines, and text styling:
 
-- Use <br><br> for paragraph breaks (new paragraphs)
-- Use <br> for single line breaks (for dramatic pause/breathing room)
-- Use <b>text</b> for bold/emphasis on key phrases
-- Use <i>text</i> for italic emphasis
+- **Paragraph breaks:** Use <br><br> between paragraphs (every new paragraph = <br><br>)
+- **Line breaks:** Use <br> within paragraphs for dramatic pause or breathing room
+- **Bold:** Use <b>text</b> for key phrases, important words, emphasis
+- **Italic:** Use <i>text</i> for quotes, italics, subtle emphasis
+- **Spacing:** Ensure readable rhythm—no wall-of-text. Break up long blocks.
 - DO NOT use \\n or \\n\\n - use HTML tags only!
 
 ## BODY SECTION RHYTHM EXAMPLES (VARY THESE!):
@@ -324,11 +326,12 @@ Rhythm D - Cliffhanger:
 "That's when she found something unexpected.<br><br>Something her doctors had dismissed for years."
 
 ## CRITICAL RULES:
-- **VERBATIM COPY (NON-NEGOTIABLE):** You MUST preserve the user's advertorial copy EXACTLY. Do NOT add, remove, rephrase, or summarize any line, sentence, or paragraph. Every piece of text the user provides must appear in your output unchanged. Extract structure (headline, body sections, etc.) but keep all content verbatim. If the copy has 10 paragraphs, output must have those same 10 paragraphs with identical wording. No hallucination—no invented or omitted content.
+- **ZERO OMISSION (ABSOLUTE):** Use the COMPLETE advertorial copy. NOT A SINGLE LINE may be added or removed. The FIRST line of the copy MUST appear—never skip it. No matter how long—500 words or 10,000—include it ALL. Every headline, subheadline, body paragraph, list item, review, testimonial, case study, footnote, and disclaimer must appear verbatim. If the copy has 20 paragraphs, output 20. If it has 15 reviews, output 15. NEVER summarize, condense, omit, skip, or paraphrase. Preserve 100% of the text exactly as written.
+- **VERBATIM COPY (NON-NEGOTIABLE):** Preserve the user's copy EXACTLY—identical wording, no rephrasing. Every sentence must appear unchanged. No hallucination—no invented or omitted content. Do not add lines that are not in the copy.
 - **MEDIA PLACEHOLDERS:** The user may include [image] or [gif] in their copy. Keep these markers exactly where they appear in section content; they will be replaced with generated media. Generate images/GIFs ONLY at those placeholder positions—do not add extra image sections elsewhere.
 - **NO TRUNCATION:** When building HTML and CSS, you MUST output the complete, full output. Never truncate, abbreviate, or leave sections incomplete—even for very long copy. Write every section, every style.
 - POST CATEGORY is ALWAYS REQUIRED - generate an appropriate category based on the content!
-- Body sections MAX 150 WORDS - short paragraphs, varied rhythm!
+- Body sections: preserve ALL content—create as many sections as needed. No word limits.
 - Reviews MAX 2-4 SENTENCES - human-like, not marketing speak!
 - Social proofs MAX 1-2 SENTENCES each - brief and credible!
 - Listicle items MAX 70 WORDS - concise and scannable!

@@ -49,7 +49,7 @@ export async function generateFunnelMedia(
   if (preferGif && videoModel) {
     try {
       const gifGuideline = getGifGenerationGuideline();
-      const videoPrompt = `${imagePrompt} ${ANIMATION_STYLE_DIRECTIVE}\n\nHyperrealistic, photorealistic animation—must look like real footage, not CGI. GIF rules (follow precisely):\n${gifGuideline.slice(0, 3000)}`;
+      const videoPrompt = `${imagePrompt} ${ANIMATION_STYLE_DIRECTIVE}\n\nUltra-photorealistic animation—must look like real documentary footage, 8K quality, indistinguishable from real video. No CGI or artificial look. GIF rules (follow precisely):\n${gifGuideline.slice(0, 3000)}`;
       const videoResult = await experimental_generateVideo({
         model: videoModel,
         prompt: videoPrompt,

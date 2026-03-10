@@ -14,6 +14,9 @@ import {
   Eye,
   LayoutTemplate,
   Sparkles,
+  ChevronDown,
+  ChevronUp,
+  Copy,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -25,7 +28,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
-import { renderPreviewDocument } from "@/lib/copy-injection";
+import { buildFullHtmlFromScaffold, renderPreviewDocument } from "@/lib/copy-injection";
 import { TemplateRecord } from "@/lib/types";
 
 const TEMPLATE_ACCENTS = [
@@ -48,6 +51,7 @@ export function CopyInjectionTemplateTrainer() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [showFullHtml, setShowFullHtml] = useState(false);
 
   useEffect(() => {
     fetch("/api/agents/copy-injection/templates")
@@ -369,23 +373,71 @@ export function CopyInjectionTemplateTrainer() {
                 <FileCode className="size-4" />
                 HTML scaffold
               </label>
+              <p className="mb-1 text-xs text-muted-foreground">
+                Full HTML with {`{{content}}`} or {`{{sections}}`} for content, {`{{styles}}`} for &lt;link href="styles.css"&gt;
+              </p>
               <textarea
                 className="min-h-32 w-full rounded-lg border border-input bg-[#0d1117] p-3 font-mono text-xs text-slate-300 focus:outline-none focus:ring-2 focus:ring-ring"
                 value={htmlScaffold}
                 onChange={(event) => setHtmlScaffold(event.target.value)}
-                placeholder="Optional HTML structure..."
+                placeholder='&lt;!DOCTYPE html&gt;...&lt;head&gt;{{styles}}&lt;/head&gt;&lt;body&gt;{{content}}&lt;/body&gt;...'
               />
+              {htmlScaffold.trim() ? (
+                <div className="mt-3 rounded-lg border border-border/60">
+                  <div className="flex items-center justify-between border-b border-border/60 px-3 py-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowFullHtml((v) => !v)}
+                      className="flex flex-1 items-center gap-2 text-left text-sm font-medium text-foreground hover:bg-muted/50"
+                    >
+                      <span>Full HTML for funnel</span>
+                      {showFullHtml ? (
+                        <ChevronUp className="size-4" />
+                      ) : (
+                        <ChevronDown className="size-4" />
+                      )}
+                    </button>
+                    {showFullHtml ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-1.5 shrink-0"
+                        onClick={() => {
+                          void navigator.clipboard.writeText(
+                            buildFullHtmlFromScaffold(htmlScaffold),
+                          );
+                        }}
+                      >
+                        <Copy className="size-3.5" />
+                        Copy
+                      </Button>
+                    ) : null}
+                  </div>
+                  {showFullHtml ? (
+                    <div className="p-2">
+                      <textarea
+                        readOnly
+                        className="min-h-48 w-full rounded border border-input bg-[#0d1117] p-3 font-mono text-xs text-slate-300"
+                        value={buildFullHtmlFromScaffold(htmlScaffold)}
+                      />
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
             <div>
               <label className="mb-1.5 flex items-center gap-2 text-sm font-medium">
                 <Palette className="size-4" />
                 CSS scaffold
               </label>
+              <p className="mb-1 text-xs text-muted-foreground">
+                Full CSS stylesheet for the funnel.
+              </p>
               <textarea
                 className="min-h-32 w-full rounded-lg border border-input bg-[#0d1117] p-3 font-mono text-xs text-slate-300 focus:outline-none focus:ring-2 focus:ring-ring"
                 value={cssScaffold}
                 onChange={(event) => setCssScaffold(event.target.value)}
-                placeholder="Optional CSS..."
+                placeholder="Full CSS: all rules, selectors, media queries..."
               />
             </div>
           </div>

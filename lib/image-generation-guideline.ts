@@ -250,7 +250,7 @@ Use motion/animation when the content requires it for credibility and comprehens
  * Compact style directives to append to image model prompts.
  * The image model receives a single prompt string; these enforce the guideline's visual tone.
  */
-export const IMAGE_MODEL_STYLE_DIRECTIVE = `Style: Hyperrealistic, photorealistic—must look like a real photograph, not CGI or illustration. Editorial, candid, observational. Natural lighting, real skin texture, authentic environments. Calm, educational, trustworthy tone. No text, logos, badges, or promotional elements. Must NOT look like advertising, stock photography, or AI-generated art.`;
+export const IMAGE_MODEL_STYLE_DIRECTIVE = `Style: Ultra-photorealistic, 8K quality, indistinguishable from real photography. Hyperrealistic skin texture, natural pores, authentic lighting and shadows. Editorial, candid, observational—like a documentary still. Natural lighting, real environments, lifelike materials. Must look like a real photograph—never CGI, illustration, or AI-art. No text, logos, badges, or promotional elements. Calm, educational, trustworthy tone. Must NOT look like advertising, stock photography, or AI-generated.`;
 
 /**
  * Animation style for video/GIF generation, per the image guideline.

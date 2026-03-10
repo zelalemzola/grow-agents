@@ -28,6 +28,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { createPreviewSrcDoc, injectImagesIntoHtml } from "@/lib/funnel-preview";
+import { renderDocumentWithCssLink } from "@/lib/copy-injection";
 import { readUiMessageSseStream, UiStreamChunk } from "@/lib/read-ui-stream";
 import {
   FunnelListItem,
@@ -623,9 +624,10 @@ export function CopyInjectionProjectEditor({
     }
 
     const zip = new JSZip();
-    const standaloneHtml = createPreviewSrcDoc(htmlDraft, cssDraft, imagesDraft);
+    const fullHtml = renderDocumentWithCssLink(htmlDraft);
+    const htmlWithImages = injectImagesIntoHtml(fullHtml, imagesDraft);
 
-    zip.file("index.html", standaloneHtml);
+    zip.file("index.html", htmlWithImages);
     zip.file("styles.css", cssDraft);
 
     const content = await zip.generateAsync({ type: "blob" });
@@ -651,10 +653,11 @@ export function CopyInjectionProjectEditor({
   };
 
   const handleCopyHtml = async () => {
-    const htmlWithImages = injectImagesIntoHtml(htmlDraft, imagesDraft);
+    const fullHtml = renderDocumentWithCssLink(htmlDraft);
+    const htmlWithImages = injectImagesIntoHtml(fullHtml, imagesDraft);
     try {
       await navigator.clipboard.writeText(htmlWithImages);
-      setStatus("Copied HTML (with image URLs) to clipboard.");
+      setStatus("Copied full HTML (with link to styles.css) to clipboard.");
     } catch {
       setStatus("Copy failed.");
     }
@@ -663,7 +666,7 @@ export function CopyInjectionProjectEditor({
   const handleCopyCss = async () => {
     try {
       await navigator.clipboard.writeText(cssDraft);
-      setStatus("Copied CSS to clipboard.");
+      setStatus("Copied full CSS to clipboard.");
     } catch {
       setStatus("Copy failed.");
     }
@@ -944,7 +947,7 @@ export function CopyInjectionProjectEditor({
             </Button>
           </div>
           <p className="mt-1.5 text-xs text-muted-foreground">
-            Copy HTML / Copy CSS use real image URLs. Copy full page = standalone document.
+            Copy HTML = full document with link to styles.css. Copy CSS = full stylesheet.
           </p>
           {editTrace.length > 0 ? (
             <div className="mt-3 max-h-36 overflow-auto rounded-lg border border-border/60 bg-muted/20 p-3 text-xs text-muted-foreground">

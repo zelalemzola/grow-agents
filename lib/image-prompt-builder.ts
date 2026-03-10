@@ -29,7 +29,7 @@ const visualDescriptionSchema = z.object({
     .min(20)
     .max(450)
     .describe(
-      "Concrete hyperrealistic scene description. Specify: who (people, roles), what is happening, setting, lighting, mood. Must match exactly what the section content describes.",
+      "Ultra-photorealistic scene description. Specify: who (people, roles), what is happening, setting, lighting, mood. Must match the section content exactly. Describe as if directing a documentary—lifelike, authentic, real photography.",
     ),
   /** For product sections: scene type to apply targeted style hints. Use null when not a product section. */
   sceneType: sceneTypeSchema.nullable(),
@@ -109,7 +109,7 @@ export async function buildVisualDescription(
     hook: "HOOK IMAGE: Show the opening scene or emotion the hook suggests. Candid, observational. Editorial tone.",
     body: "BODY IMAGE: Visually explain this section's single core idea. One idea = one image. Must simplify and clarify what the reader just read. Explain, don't decorate.",
     cta: "CTA IMAGE: Show the outcome or transformation the CTA promises. Subtle, editorial. No ad-like elements.",
-    testimonial: "TESTIMONIAL IMAGE: Show the person/situation implied by the testimonial. Editorial, trustworthy.",
+    testimonial: "TESTIMONIAL IMAGE: Selfie-style photo of the person from the testimonial holding the product/service, happy and satisfied. Candid, authentic, editorial. Match the reviewer (age/gender from name/quote). Person clearly holding or using the product.",
     proof: "PROOF IMAGE: Show evidence—study scene, mechanism, or result. Educational, clinical-but-human.",
     image: "IMAGE SECTION: Illustrate the key concept of this section. Direct visual support for the copy.",
     faq: "FAQ IMAGE: Show the situation or question the FAQ addresses. Clear, low clutter.",
@@ -158,7 +158,7 @@ ${productGuidelinesBlock}
 ${section.preferGif ? "This will be ANIMATED (GIF/video). Describe a moment of transition, process in progress, or cause-effect in motion." : ""}
 ${section.isProductSection ? "This section discusses the product. Describe the scene so the product is clearly incorporated—show it in context. If a product reference image is provided, match that product exactly." : ""}
 
-Task: Write a concrete scene description (2-3 sentences). Specify people, setting, lighting, mood. Be EXACTLY aligned with what the content describes. Output hyperrealistic, photorealistic—like a real photograph.
+Task: Write a concrete scene description (2-3 sentences). Specify people, setting, lighting, mood. Be EXACTLY aligned with what the content describes. Output ultra-photorealistic—must be indistinguishable from real photography, with lifelike detail and authentic texture.
 sceneType: ${section.isProductSection ? "Choose the most fitting from: before_after, doctor_recommendation, testimonial_with_product, product_mechanism, product_intro, transformation, other." : "Use null (this is not a product section)."}`;
 
   const result = await generateObject({
@@ -166,11 +166,12 @@ sceneType: ${section.isProductSection ? "Choose the most fitting from: before_af
     schema: visualDescriptionSchema,
     system: IMAGE_GENERATION_GUIDELINE + gifBlock,
     prompt: contentAwarePrompt,
+    maxOutputTokens: 4096,
   });
 
   return {
     description: result.object.description,
-    sceneType: result.object.sceneType,
+    sceneType: result.object.sceneType ?? undefined,
   };
 }
 

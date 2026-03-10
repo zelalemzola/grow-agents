@@ -41,20 +41,20 @@ export function injectImagesIntoHtml(
 
   return html.replace(
     /<img([^>]*?)src=["']\{\{image:([^}]+)\}\}["']([^>]*)>/gi,
-    (_match, before, rawSectionId, after) => {
+    (match, before, rawSectionId, after) => {
       const sectionId = String(rawSectionId).trim();
       const src = images[sectionId] ?? "";
-      if (!src) return "";
+      if (!src) return match; // Keep original img tag with placeholder when image missing
       if (isVideoUrl(src)) {
         const safeSrc = src.replace(/"/g, "&quot;");
         return makeVideoHtml(safeSrc);
       }
       return `<img${before}src="${src}"${after}>`;
     },
-  ).replace(/\{\{image:([^}]+)\}\}/g, (_full, rawSectionId) => {
+  ).replace(/\{\{image:([^}]+)\}\}/g, (full, rawSectionId) => {
     const sectionId = String(rawSectionId).trim();
     const src = images[sectionId] ?? "";
-    if (!src) return "";
+    if (!src) return full; // Keep placeholder when image missing so img tags stay in output
     if (isVideoUrl(src)) {
       const safeSrc = src.replace(/"/g, "&quot;");
       return makeVideoHtml(safeSrc);
@@ -62,6 +62,37 @@ export function injectImagesIntoHtml(
     const safeSrc = src.replace(/"/g, "&quot;");
     return `<img src="${safeSrc}" alt="" class="funnel-media" style="width:100%;max-width:100%;height:auto;display:block;border-radius:12px;" />`;
   });
+}
+
+/** True if html appears to be a complete document (has doctype or html tag). */
+function isFullHtmlDocument(html: string): boolean {
+  const trimmed = (html || "").trim();
+  return /^\s*<!DOCTYPE\s/i.test(trimmed) || /^\s*<html[\s>]/i.test(trimmed);
+}
+
+/** Replaces link to styles.css with embedded style for iframe preview (srcdoc cannot load external files). */
+function embedStylesForPreview(html: string, css: string): string {
+  const linkPattern = /<link[^>]*href=["']styles\.css["'][^>]*\/?>/gi;
+  const safeCss = css.replace(/<\/style>/gi, "</\u200Bstyle>");
+  const styleTag = `<style>${safeCss}${css.includes("funnel-video-wrap") ? "" : `
+.funnel-video-wrap video::-webkit-media-controls { display: none !important; }
+.funnel-video-wrap video::-webkit-media-controls-enclosure { display: none !important; }
+.funnel-video-wrap video { -webkit-appearance: none; appearance: none; }
+`}</style>`;
+
+  let result = html.replace(linkPattern, styleTag);
+
+  /* If no link was replaced (e.g. missing or different format), inject CSS before </head> so preview is always styled */
+  if (result === html || !/<style[\s>]/.test(result)) {
+    const headClose = result.search(/<\/head\s*>/i);
+    if (headClose >= 0) {
+      result = result.slice(0, headClose) + "\n  " + styleTag + "\n  " + result.slice(headClose);
+    } else {
+      result = result.replace(/<body/i, styleTag + "\n  <body");
+    }
+  }
+
+  return result;
 }
 
 export function createPreviewSrcDoc(
@@ -72,5 +103,23 @@ export function createPreviewSrcDoc(
   const mergedHtml = injectImagesIntoHtml(html, images);
   const hasVideos = images && Object.values(images).some((url) => isVideoUrl(url));
   const bodyContent = mergedHtml + (hasVideos ? VIDEO_AUTOPLAY_SCRIPT : "");
+
+  if (isFullHtmlDocument(mergedHtml)) {
+    let result = embedStylesForPreview(mergedHtml, css + VIDEO_CSS);
+    if (hasVideos) {
+      const hasVideoCss = result.includes("funnel-video-wrap");
+      if (!hasVideoCss) {
+        const styleClose = result.search(/<\/style\s*>/i);
+        if (styleClose >= 0) {
+          result = result.slice(0, styleClose) + VIDEO_CSS + result.slice(styleClose);
+        } else {
+          result = result.replace(/<\/head\s*>/i, `<style>${VIDEO_CSS}</style></head>`);
+        }
+      }
+      result = result.replace(/<\/body\s*>/i, VIDEO_AUTOPLAY_SCRIPT + "</body>");
+    }
+    return result;
+  }
+
   return renderPreviewDocument(bodyContent, css + VIDEO_CSS);
 }
