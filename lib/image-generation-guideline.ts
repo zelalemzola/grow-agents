@@ -201,6 +201,13 @@ Nothing should resemble a paid advertisement.
 
 ---
 
+# Content-Section Alignment (CRITICAL)
+
+Each image must depict EXACTLY what its section describes—nothing else:
+- Do not mix concepts from other sections
+- The image is a direct visual translation of this section only
+- When section mentions a specific person: match their gender and show them (as selfie when testimonial/experience)
+
 # Universal Failure Conditions
 
 Generation fails if:
@@ -208,6 +215,10 @@ Generation fails if:
 - Headline image explains too much
 - Body image decorates instead of clarifies
 - Product mechanism is not visually demonstrated
+- Product section does not show the product clearly
+- Testimonial/experience shows wrong gender (woman in content → man in image, or vice versa)
+- Testimonial/experience is not selfie-style when content describes a person's result
+- Image does not match its section's content (depicts unrelated concept)
 - Style looks like banner advertising
 - Text appears in the image
 - The image resembles stock advertising photography
@@ -233,6 +244,12 @@ Use motion/animation when the content requires it for credibility and comprehens
 - Section shows **mechanism**, **delivery**, or **absorption**
 - Product introduction that must visually prove how it works
 - Mechanism examples: direct delivery, bypassing digestion, targeted absorption
+
+## Testimonial / Product + Person Images (CRITICAL):
+- Testimonials and ANY section discussing the product that shows a person MUST be selfie-style
+- Selfie = first-person POV, person holding or using the product, as if they took the photo themselves
+- Person and product must both be visible in frame
+- MUST match the person's gender: if content mentions a woman (name, she/her), show a woman; if a man (name, he/him), show a man
 
 ## Use static when:
 - Static testimonials, FAQs, simple hero hooks with no process implied

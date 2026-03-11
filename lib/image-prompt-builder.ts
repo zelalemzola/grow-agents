@@ -27,12 +27,31 @@ const visualDescriptionSchema = z.object({
   description: z
     .string()
     .min(20)
-    .max(450)
+    .max(500)
     .describe(
-      "Ultra-photorealistic scene description. Specify: who (people, roles), what is happening, setting, lighting, mood. Must match the section content exactly. Describe as if directing a documentary—lifelike, authentic, real photography.",
+      "Ultra-photorealistic scene description. Specify: who (people, roles, gender when a person is mentioned), what is happening, setting, lighting, mood. Must match the section content exactly. Describe as if directing a documentary—lifelike, authentic, real photography.",
     ),
   /** For product sections: scene type to apply targeted style hints. Use null when not a product section. */
   sceneType: sceneTypeSchema.nullable(),
+  /** When content mentions a person (testimonial, reviewer, customer), their gender. CRITICAL: Use to ensure image shows correct person. */
+  personGender: z
+    .enum(["woman", "man", "unspecified"])
+    .nullable()
+    .describe(
+      "If content mentions a specific person by name or pronouns (she/he, her/him), set woman or man. Use unspecified only when no person or gender cannot be determined.",
+    ),
+  /** When content describes a person's result, experience, or testimonial with the product—image must be selfie-style. ALWAYS true for testimonials. True when section discusses the product that shows a person. */
+  requiresSelfie: z
+    .boolean()
+    .describe(
+      "ALWAYS true for testimonial sections. True when section discusses the product AND shows a person (customer, reviewer, someone's result/experience). Image MUST be a selfie of that person holding or using the product.",
+    ),
+  /** Image type: product_only = product shot (no person), selfie = person holding/using product, section_image = general section illustration */
+  imageType: z
+    .enum(["product_only", "selfie", "section_image"])
+    .describe(
+      "product_only: content discusses ONLY the product (mechanism, benefits)—show product clearly, no person. selfie: content mentions a person's experience/testimonial with product—show that person in selfie with product. section_image: general section—illustrate the concept, mechanism, or scene from the content.",
+    ),
 });
 
 type SectionType =
@@ -58,10 +77,12 @@ export interface FunnelContextForImage {
 const SCENE_TYPE_HINTS: Record<string, string> = {
   before_after: "Split or side-by-side composition, transformation reveal, realistic before/after, authentic results.",
   doctor_recommendation: "Doctor or expert in clinical/lab setting holding the product, professional but approachable, recommending or demonstrating it. Show the doctor clearly holding the product.",
-  testimonial_with_product: "Happy person holding the product, genuine satisfaction, candid moment. Match the testimonial—show them using or holding the product as described. Real person, authentic feel.",
-  product_mechanism: "Clear visual of how product works, mechanism in action, educational and precise.",
-  product_intro: "Product clearly visible in context, editorial presentation, not staged advertising.",
-  transformation: "Moment of change or result, authentic progress, real-person feel.",
+  testimonial_with_product:
+    "SELFIE-STYLE: Person taking the photo themselves, first-person POV, holding or using the product. Happy, satisfied, genuine. MUST match the testimonial subject's gender exactly (woman or man as stated in content). Candid selfie feel—not a professional photo.",
+  product_mechanism: "Product clearly visible. Clear visual of how product works, mechanism in action, educational and precise. Show the product in use or demonstrating its mechanism.",
+  product_intro: "Product clearly visible in frame, editorial presentation, not staged advertising. Product is the focal point.",
+  transformation:
+    "SELFIE-STYLE when showing a person: first-person POV, person holding or using the product, moment of change. Authentic progress, real-person feel.",
   other: "Match the exact scenario described in the content. Hyperrealistic, editorial.",
 };
 
@@ -84,34 +105,22 @@ export async function buildVisualDescription(
   model: Parameters<typeof generateObject>[0]["model"],
   funnelContext?: FunnelContextForImage,
 ): Promise<{ description: string; sceneType?: string }> {
-  // Use section plan's imagePrompt only when it's concrete, section-specific, and non-generic
-  if (section.imagePrompt && section.imagePrompt.trim().length >= 40) {
-    const prompt = section.imagePrompt.trim();
-    if (
-      !/^(generic|stock|placeholder|example|sample|a photo|an image)/i.test(
-        prompt,
-      ) &&
-      (section.title || section.content)
-    ) {
-      return { description: prompt, sceneType: undefined };
-    }
-  }
-
   const plainContent = section.content
     .replace(/<[^>]+>/g, " ")
     .replace(/\s+/g, " ")
     .trim()
-    .slice(0, 800);
+    .slice(0, 1800);
 
   const typeGuidance: Record<string, string> = {
     headline:
       "HEADLINE IMAGE: Create extreme curiosity. Show the hinted situation/moment from the headline—do NOT show the solution or product. Unfinished, in-progress feel. Curiosity over clarity.",
     hook: "HOOK IMAGE: Show the opening scene or emotion the hook suggests. Candid, observational. Editorial tone.",
-    body: "BODY IMAGE: Visually explain this section's single core idea. One idea = one image. Must simplify and clarify what the reader just read. Explain, don't decorate.",
+    body: "BODY IMAGE: Visually explain this section's single core idea. One idea = one image. Must simplify and clarify what the reader just read. If content mentions a person's result/experience with a product: SELFIE of that person holding/using it. Match person's gender (woman/man) from content. Explain, don't decorate.",
     cta: "CTA IMAGE: Show the outcome or transformation the CTA promises. Subtle, editorial. No ad-like elements.",
-    testimonial: "TESTIMONIAL IMAGE: Selfie-style photo of the person from the testimonial holding the product/service, happy and satisfied. Candid, authentic, editorial. Match the reviewer (age/gender from name/quote). Person clearly holding or using the product.",
+    testimonial:
+      "TESTIMONIAL IMAGE (MANDATORY SELFIE): Selfie-style photo—person taking the photo themselves, first-person POV, holding or using the product. Happy, satisfied, candid. MUST match the reviewer's gender exactly (woman or man as implied by name, e.g. Sarah=woman, John=man, or pronouns in quote). Person clearly holding or using the product in frame.",
     proof: "PROOF IMAGE: Show evidence—study scene, mechanism, or result. Educational, clinical-but-human.",
-    image: "IMAGE SECTION: Illustrate the key concept of this section. Direct visual support for the copy.",
+    image: "IMAGE SECTION: Illustrate the key concept of this section. If about a person's experience: selfie of them with the product. Match gender. Direct visual support for the copy.",
     faq: "FAQ IMAGE: Show the situation or question the FAQ addresses. Clear, low clutter.",
   };
   const typeHint = section.type ? typeGuidance[section.type] ?? "" : "";
@@ -121,45 +130,61 @@ export async function buildVisualDescription(
       ? `\n\n---\nGIF/MECHANISM ANIMATION RULES (MANDATORY for this GIF):\n${getGifGenerationGuideline().slice(0, 2500)}`
       : "";
 
+  const otherSections =
+    funnelContext?.sectionSummaries?.filter((s) => s.id !== section.id) ?? [];
   const funnelContextBlock = funnelContext
     ? `
-FUNNEL CONTEXT (images must align with the overall story):
+FUNNEL CONTEXT:
 - Page/offer: ${funnelContext.pageName}
 - Objective: ${funnelContext.objective.slice(0, 400)}
-${funnelContext.sectionSummaries && funnelContext.sectionSummaries.length > 0 ? `
-Other sections in this funnel (for coherence; do NOT mix their content into this image):
-${funnelContext.sectionSummaries
-  .filter((s) => s.id !== section.id)
-  .map((s) => `- ${s.title}: ${s.contentPreview.slice(0, 80)}...`)
-  .join("\n")}` : ""}
+${otherSections.length > 0 ? `
+Other sections (do NOT mix their content into this image. Each section gets a UNIQUE image):
+${otherSections.map((s) => `- ${s.id} (${s.title}): ${s.contentPreview.slice(0, 60)}...`).join("\n")}` : ""}
 `
     : "";
+
+  const uniquenessBlock =
+    otherSections.length > 0 || section.id
+      ? `
+UNIQUENESS (CRITICAL): This image is for section "${section.id ?? "this section"}" only. Each section gets a DIFFERENT image. Your description MUST be unique—different person (when showing people), different composition, different setting, angle, or moment. Never describe a generic scene that could apply to multiple sections. Include specific differentiating details.`
+      : "";
 
   const productGuidelinesBlock =
     section.isProductSection && funnelContext?.productGuidelines?.trim()
       ? `\n\nPRODUCT-SPECIFIC GUIDELINES (follow these for this product):\n${funnelContext.productGuidelines.trim().slice(0, 1500)}`
       : "";
 
-  const contentAwarePrompt = `You are creating a HYPERREALISTIC image for a specific section. The image MUST perfectly match what the surrounding content describes.
+  const contentAwarePrompt = `You are creating a HYPERREALISTIC image for ONE specific section. The content below is the ONLY source for your description—use it to generate a unique, section-specific prompt.
 
-CONTENT-AWARE EXTRACTION: Analyze the section content and determine:
+**CONTENT-ONLY RULE:** Your output must derive EXCLUSIVELY from the content below. This image will appear right next to this content. Analyze and determine:
 - WHO is in the scene (doctor, patient, happy customer, researcher, etc.)
 - WHAT is happening (before/after reveal, recommendation, holding product, transformation, mechanism)
 - WHERE it takes place (lab, clinic, home, office)
 - TONE (clinical, hopeful, testimonial, educational)
+
+CRITICAL RULES (MANDATORY):
+1. GENDER MATCHING: If the content mentions a woman (by name like Sarah, Lisa, or pronouns she/her), the image MUST show a woman. If it mentions a man (John, Mike, he/him), show a man. Set personGender accordingly. Your description MUST explicitly state "a woman" or "a man" when a person is depicted.
+2. SELFIE FOR TESTIMONIALS & PRODUCT+PERSON (MANDATORY): Testimonial sections ALWAYS require requiresSelfie: true. Any section that discusses the product AND shows a person (reviewer, customer, someone's result/experience) ALSO requires requiresSelfie: true. The image MUST be a selfie—first-person POV, person holding or using the product, as if they took the photo themselves. Candid, authentic, not a professional shoot. Person and product visible in frame.
+3. EXACT CONTENT MATCH: The image must depict EXACTLY and ONLY what this section describes. Do not mix concepts from other sections. Direct visual translation of this section's content only.
+4. UNIQUENESS: This image must be visually distinct from other funnel images. Unique composition, different person/scene/setting. No generic or repetitive descriptions.
+5. PRODUCT VISIBILITY: When the section discusses the product (mechanism, benefits, how it works), ensure the product is clearly visible. For product-intro: product in frame as focal point. For mechanism: show how it works.
 
 Section type: ${section.type ?? "body"}
 Section title: ${section.title}
 Section content: ${plainContent}
 ${typeHint ? `\nSection-type rules: ${typeHint}` : ""}
 ${funnelContextBlock}
+${uniquenessBlock}
 ${productGuidelinesBlock}
 
 ${section.preferGif ? "This will be ANIMATED (GIF/video). Describe a moment of transition, process in progress, or cause-effect in motion." : ""}
-${section.isProductSection ? "This section discusses the product. Describe the scene so the product is clearly incorporated—show it in context. If a product reference image is provided, match that product exactly." : ""}
+${section.isProductSection ? "This section discusses the product. Describe the scene so the product is clearly incorporated—show it in context. If a product reference image is provided, match that product exactly. When showing people with the product, include the product visibly in their hands or in use." : ""}
 
-Task: Write a concrete scene description (2-3 sentences). Specify people, setting, lighting, mood. Be EXACTLY aligned with what the content describes. Output ultra-photorealistic—must be indistinguishable from real photography, with lifelike detail and authentic texture.
-sceneType: ${section.isProductSection ? "Choose the most fitting from: before_after, doctor_recommendation, testimonial_with_product, product_mechanism, product_intro, transformation, other." : "Use null (this is not a product section)."}`;
+**IMAGE TYPE (set imageType):** From the content, determine: (a) product_only—content discusses ONLY the product, no person mentioned → show product clearly; (b) selfie—content mentions a person's experience, testimonial, or result with product → selfie of that person with product; (c) section_image—general mechanism, concept, or scene → illustrate that specific idea.
+
+Task: Write a concrete scene description (2-3 sentences) derived ONLY from the content below. Specify people (and gender), setting, lighting, mood. Ultra-photorealistic.
+sceneType: ${section.isProductSection ? "Choose: before_after, doctor_recommendation, testimonial_with_product, product_mechanism, product_intro, transformation, other." : "Use null."}
+imageType: Set based on content analysis above.`;
 
   const result = await generateObject({
     model,
@@ -169,8 +194,35 @@ sceneType: ${section.isProductSection ? "Choose the most fitting from: before_af
     maxOutputTokens: 4096,
   });
 
+  let description = result.object.description;
+
+  // Reinforce gender when LLM extracted it but description may lack explicit mention
+  const personGender = result.object.personGender ?? undefined;
+  if (personGender === "woman" && !/\b(woman|female|she|her)\b/i.test(description)) {
+    description = `A woman, ${description.charAt(0).toLowerCase() + description.slice(1)}`;
+  } else if (personGender === "man" && !/\b(man|male|he|him|his)\b/i.test(description)) {
+    description = `A man, ${description.charAt(0).toLowerCase() + description.slice(1)}`;
+  }
+
+  // Force selfie for testimonials and product+person; never for product_only
+  const imageType = (result.object as { imageType?: string }).imageType;
+  const forceSelfie =
+    imageType !== "product_only" &&
+    (section.type === "testimonial" ||
+      result.object.requiresSelfie ||
+      imageType === "selfie" ||
+      ["testimonial_with_product", "transformation", "before_after"].includes(
+        result.object.sceneType ?? "",
+      ));
+  if (forceSelfie && !/selfie|first-person|holding the product|using the product/i.test(description)) {
+    description = `Selfie-style photo, first-person POV, person holding or using the product. ${description}`;
+  }
+  if (imageType === "product_only" && !/product|product's|the product/i.test(description)) {
+    description = `Product clearly visible in frame, focal point. ${description}`;
+  }
+
   return {
-    description: result.object.description,
+    description,
     sceneType: result.object.sceneType ?? undefined,
   };
 }

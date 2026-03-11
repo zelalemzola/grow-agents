@@ -57,7 +57,7 @@ export function replacePlaceholdersInHtml(
 }
 
 /** Context window (chars) before/after a placeholder for image prompt */
-const CONTEXT_CHARS = 600;
+const CONTEXT_CHARS = 1200;
 
 /**
  * Returns the text surrounding the placeholder at the given index in the objective,

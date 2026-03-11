@@ -174,12 +174,25 @@ For each section output:
 - imagePrompt: 1-2 sentence visual for this section. Editorial, candid, no text/logos.
 - preferGif: true for process/mechanism; false for testimonials, FAQs
 
+**TESTIMONIALS - ONE SECTION PER REVIEWER (CRITICAL):** Each individual review/testimonial from a DIFFERENT person MUST be its own section with type "testimonial". Example: 5 reviews from Sarah, Mike, Lisa, John, Emma = 5 sections: testimonial-1, testimonial-2, testimonial-3, testimonial-4, testimonial-5. NEVER put multiple reviews in one section. Each testimonial section gets its own image slot.
+
 Create enough sections so all ${paragraphs.length} paragraphs are assigned. Follow template structure.`,
   });
 
   const sectionPlan = sectionPlanResult.object;
   injectContentFromCopy(sectionPlan.sections, parsedData.objective);
   formatSectionPlanContentForHtml(sectionPlan.sections);
+
+  /* Prepend image placeholder to each testimonial section's content so it gets into the HTML */
+  for (const s of sectionPlan.sections) {
+    if (s.type === "testimonial" && s.id) {
+      const imgPlaceholder = `<img src="{{image:${s.id}}}" alt="" class="funnel-media" style="width:100%;max-width:100%;height:auto;display:block;border-radius:12px;" />`;
+      s.content = (s.content ?? "").trim()
+        ? imgPlaceholder + "<br><br>" + (s.content ?? "")
+        : imgPlaceholder;
+    }
+  }
+
   emit({
     type: "reasoning",
     message: "Section plan completed; next step is transforming plan into semantic HTML/CSS.",
@@ -210,14 +223,17 @@ Create enough sections so all ${paragraphs.length} paragraphs are assigned. Foll
   };
   const placeholderCandidates: Omit<ImageCandidate, "isProductSection">[] =
     mediaPlaceholders.length > 0
-      ? mediaPlaceholders.map((p, i) => ({
-          id: p.id,
-          title: p.type === "gif" ? "GIF" : "Image",
-          content: getPlaceholderContext(parsedData.objective, i, mediaPlaceholders),
-          type: "body" as const,
-          imagePrompt: null,
-          preferGif: p.type === "gif",
-        }))
+      ? mediaPlaceholders.map((p, i) => {
+          const ctx = getPlaceholderContext(parsedData.objective, i, mediaPlaceholders);
+          return {
+            id: p.id,
+            title: p.type === "gif" ? "GIF" : "Image",
+            content: `[Content around this ${p.type} placeholder—use ONLY this to generate the image prompt]:\n\n${ctx}`,
+            type: "body" as const,
+            imagePrompt: null,
+            preferGif: p.type === "gif",
+          };
+        })
       : [];
 
   const testimonialCandidates: Omit<ImageCandidate, "isProductSection">[] =
@@ -226,9 +242,13 @@ Create enough sections so all ${paragraphs.length} paragraphs are assigned. Foll
       .map((s) => ({
         id: s.id,
         title: s.title,
-        content: s.content.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 600),
+        content: `[Content for this testimonial—use ONLY this to generate a unique selfie image for this person]:\n\n${(s.content ?? "")
+          .replace(/<[^>]+>/g, " ")
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 1200)}`,
         type: "testimonial" as const,
-        imagePrompt: "Selfie-style photo of the person from this testimonial holding the product or service, happy and satisfied, candid authentic feel. Editorial quality, not staged. Person should match the testimonial (age/gender implied by name and quote).",
+        imagePrompt: null,
         preferGif: false,
       }));
 
@@ -253,7 +273,7 @@ Create enough sections so all ${paragraphs.length} paragraphs are assigned. Foll
 
   const defaultProductGuidelines =
     productImageBase64.length > 0
-      ? "Based on section content: show either people holding and using the product, or a doctor holding/recommending it. For testimonials: show happy people holding the product as described in the testimonial."
+      ? "CRITICAL: (1) Testimonials and ANY section showing a person with the product: MUST be a SELFIE—person taking the photo themselves, first-person POV, holding or using the product. Match their gender exactly. (2) Product intro/mechanism (no person): product clearly visible in frame. (3) Doctor/expert: show them holding or recommending the product."
       : "";
 
   const productGuidelinesFinal =
@@ -312,19 +332,46 @@ IDs in order of appearance: ${placeholderIdList}
   const testimonialImageBlock =
     testimonialSectionIds.length > 0
       ? `
-**TESTIMONIAL IMAGES (REQUIRED):** For each testimonial section, include an image slot showing the reviewer. Add: <img src="{{image:section-id}}" alt="" class="funnel-media" style="width:100%;max-width:100%;height:auto;display:block;border-radius:12px;" />
-Section IDs for testimonials: ${testimonialSectionIds.join(", ")}. Use the exact section id from the plan (e.g. {{image:testimonial-1}}). Place the image near the testimonial content.
+**TESTIMONIAL IMAGES (REQUIRED):** For EACH testimonial section, you MUST include an image slot. Use <img src="{{image:SECTION_ID}}" alt="" class="funnel-media" style="width:100%;max-width:100%;height:auto;display:block;border-radius:12px;" /> with the EXACT section id. Section IDs: ${testimonialSectionIds.join(", ")}. Each testimonial needs id="SECTION_ID" on its section/div so images map correctly. Example: <section id="testimonial-1">...<img src="{{image:testimonial-1}}" .../>...</section>
 `
       : "";
 
   const scaffoldHasPlaceholder = template?.html_scaffold?.trim().includes("{{content}}") || template?.html_scaffold?.trim().includes("{{sections}}");
+  const hasTemplate = Boolean(template?.html_scaffold?.trim());
+
+  const imageSlotsParts: string[] = [];
+  if (mediaPlaceholders.length > 0) {
+    imageSlotsParts.push(`[image]/[gif] placeholders: Replace each with img tags. IDs: ${placeholderIdList}.`);
+  }
+  if (testimonialSectionIds.length > 0) {
+    imageSlotsParts.push(`Testimonial sections: Content includes img tags—preserve them. IDs: ${testimonialSectionIds.join(", ")}.`);
+  }
+  const imageSlotsBlock =
+    imageSlotsParts.length > 0
+      ? `
+**IMAGE SLOTS (MANDATORY—regardless of template):** Include ALL image slots even if the template has none. Template = styling only. ${imageSlotsParts.join(" ")} Never omit.`
+      : "";
+
+  const templateReplicationBlock = hasTemplate
+    ? `
+**TEMPLATE REPLICATION (MANDATORY):**
+1. STRUCTURE: Copy the template's HTML structure EXACTLY—same element hierarchy, nesting, and class names.
+2. CLASS NAMES: Use the template's exact class names. Do NOT invent new class names. Extract them from the template scaffold below.
+3. WHEN ADDING SECTIONS: If the section plan has MORE sections than the template shows (e.g. more body sections, more testimonials), DUPLICATE the template's pattern. For each extra body section: use the same <section class="..."> structure, same inner elements (h2, p, etc.), same class names—only change the text content. One body section in template = pattern for all body sections. Same for testimonials, FAQs, etc.
+4. WHEN FEWER SECTIONS: Omit sections but preserve the structure of those you include. Match the template's styling of remaining sections.
+5. LAYOUT: The generated funnel must be visually indistinguishable from the template—only the copy content differs.
+`
+    : "";
+
   const htmlPrompt = `${copyContext}
 
 You are an expert HTML funnel builder. Output ONLY the HTML for the landing page body (no <html>, <head>, or <body>—just the inner content).
-${scaffoldHasPlaceholder ? "\n**Template scaffold:** The template uses {{content}} or {{sections}} for your output, and {{styles}} for the CSS link. Your output will be injected into {{content}}. The template's {{styles}} becomes <link rel=\"stylesheet\" href=\"styles.css\" />—no CSS in the HTML. Use the SAME class names and HTML structure as the template—only the content changes.\n" : ""}
+${scaffoldHasPlaceholder ? "\n**Template scaffold:** The template uses {{content}} or {{sections}} for your output. Your output will be injected into {{content}}. Use the SAME class names and HTML structure as the template's inner content—only the text changes.\n" : ""}
+${imageSlotsBlock}
+${templateReplicationBlock}
 ${placeholderBlock}
 ${testimonialImageBlock}
-**EXACT COPY - NOTHING ADDED OR REMOVED:** Output the section plan content EXACTLY as provided. Do not add, omit, or rephrase a single line. Every paragraph, review, and disclaimer from the plan must appear verbatim in the HTML.
+**EXACT COPY - NOTHING ADDED OR REMOVED:** Output the section plan content EXACTLY as provided. Do not add, omit, or rephrase a single line. Every paragraph, review, and disclaimer from the plan must appear verbatim in the HTML. **CRITICAL:** Preserve any <img src="{{image:SECTION_ID}}" ... /> tags that appear in section content—they must appear in your output unchanged.
 
 **CONTENT FORMATTING (CRITICAL):** Apply proper HTML styling to the content. Preserve spacing, emphasis, and structure from the section plan:
 - Paragraph breaks → <br><br> between each paragraph
@@ -334,17 +381,18 @@ ${testimonialImageBlock}
 - Do not paste raw unformatted text—no wall-of-text. Apply tags based on structure.
 **COMPLETE OUTPUT:** You MUST output the FULL HTML with EVERY section from the plan. Never truncate, abbreviate, or skip sections—no matter how long. Use semantic HTML. No markdown fences.
 
-**TEMPLATE 100% - EXACT RESEMBLANCE:** The selected template defines EVERYTHING. Your output must look identical to it: same class names, same HTML structure, same layout, same structure. When content is LARGER: add more sections using the SAME patterns. When SMALLER: fewer sections, SAME styling. Colors, typography, spacing—all from the template. Only the text content varies. Use the template's exact class names and markup.
-
 ADAPTIVE LAYOUT:
-- If the section plan has MORE sections than the template shows, extend the layout with the same patterns. If FEWER, condense. Every section in the plan must appear.
+- If the section plan has MORE sections than the template shows, extend by DUPLICATING the template's section pattern. Same structure, same classes, same nesting—only content varies.
 - Mobile-first, clean typography, generous whitespace, full-width sections with max-width containers, prominent CTAs.
 
 Section Plan:
 ${sectionPlanJson}
 
 Template guidance: ${templateInstructions}
-Template HTML scaffold (full HTML structure to follow): ${templateHtmlScaffold}`;
+Template HTML scaffold (COPY this structure exactly—same classes, same nesting. Duplicate section patterns when you need more sections): 
+\`\`\`html
+${templateHtmlScaffold}
+\`\`\``;
 
   const { generateFunnelMedia } = await import("@/lib/generate-funnel-media");
   const { getImageModel } = await import("@/lib/image-model");
@@ -454,18 +502,28 @@ Template HTML scaffold (full HTML structure to follow): ${templateHtmlScaffold}`
       emit({ type: "status", message: `Generating HTML chunk ${b + 1}/${batches.length}...` });
       const batchJson = JSON.stringify({ sections: batch }, null, 2);
       const batchHasTestimonials = batch.some((s) => s.type === "testimonial");
+      const batchTestimonialIds = batch.filter((s) => s.type === "testimonial").map((s) => s.id);
       const batchTestimonialBlock = batchHasTestimonials
-        ? `\n**TESTIMONIAL IMAGES:** For testimonial sections, add: <img src="{{image:section-id}}" alt="" class="funnel-media" style="width:100%;max-width:100%;height:auto;display:block;border-radius:12px;" /> using the section id (e.g. {{image:testimonial-1}}).\n`
+        ? `\n**TESTIMONIAL IMAGES (REQUIRED):** Each testimonial content includes an img tag—preserve it. IDs: ${batchTestimonialIds.join(", ")}. Include even if template has no image slots.\n`
         : "";
+      const batchImageSlotsNote =
+        mediaPlaceholders.length > 0 || batchHasTestimonials
+          ? `\n**IMAGE SLOTS (MANDATORY):** Include all image slots—replace [image]/[gif] with img tags, preserve testimonial img tags. Template structure is for styling only.\n`
+          : "";
       const batchPrompt = `${copyContext}
 
-You are an expert HTML funnel builder. Output ONLY the HTML for these ${batch.length} sections. No <html>, <head>, <body>. Just the section elements.
+You are an expert HTML funnel builder. Output ONLY the HTML for these ${batch.length} sections (chunk ${b + 1} of ${batches.length}). No <html>, <head>, <body>. Just the section elements.
+
+**TEMPLATE REPLICATION (MANDATORY):** Use the template's EXACT class names, structure, and nesting. For each section you output, match the template's corresponding section type pattern.
+${batchImageSlotsNote}
 ${placeholderBlock}
 ${batchTestimonialBlock}
-**EXACT COPY:** Output the section content EXACTLY as provided. No truncation, no omission.
-**TEMPLATE 100%:** Use the SAME class names and structure as the template. Match its styling.
+**EXACT COPY:** Output the section content EXACTLY as provided. Preserve any <img src="{{image:SECTION_ID}}" ... /> tags in the content unchanged. No truncation, no omission.
 
-Template HTML scaffold: ${templateHtmlScaffold}
+Template HTML scaffold (structure to replicate exactly):
+\`\`\`html
+${templateHtmlScaffold}
+\`\`\`
 
 Sections to render:
 ${batchJson}`;
@@ -495,6 +553,19 @@ ${batchJson}`;
   let html = mediaPlaceholders.length > 0
     ? replacePlaceholdersInHtml(htmlRaw, mediaPlaceholders)
     : htmlRaw;
+
+  /* Ensure testimonial sections have image slots—inject if HTML model missed them */
+  const testimonialImgTag = (id: string) =>
+    `<img src="{{image:${id}}}" alt="" class="funnel-media" style="width:100%;max-width:100%;height:auto;display:block;border-radius:12px;" />`;
+  for (const tid of testimonialSectionIds) {
+    if (!html.includes(`{{image:${tid}}}`)) {
+      const escaped = tid.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const sectionMatch = html.match(new RegExp(`(<(?:section|div)[^>]*id=["']${escaped}["'][^>]*>)`, "i"));
+      if (sectionMatch) {
+        html = html.replace(sectionMatch[1], sectionMatch[1] + "\n" + testimonialImgTag(tid));
+      }
+    }
+  }
 
   const CSS_LINK = '<link rel="stylesheet" href="styles.css" />';
 
@@ -544,26 +615,35 @@ ${html}
   const tagList = [...tags].sort().join(", ");
 
   emit({ type: "status", message: "Generating CSS to match HTML structure..." });
-  const cssPrompt = `${copyContext}
 
-You are an expert CSS author. Output the FULL, COMPLETE CSS for this funnel landing page.
+  const templateCssBase = (template?.css_scaffold ?? "").trim();
+  const hasTemplateCss = templateCssBase.length > 0;
 
-**CRITICAL - STYLE EVERY CLASS AND ELEMENT:** The HTML uses these classes: ${classList || "(none found)"}. The HTML uses these element tags: ${tagList || "(none found)"}. You MUST implement styles for EVERY class and EVERY relevant element. No class in the HTML may be left without a matching CSS rule.
+  const cssPrompt = hasTemplateCss
+    ? `${copyContext}
 
-**FOLLOW THE TEMPLATE - COMPLETE RESEMBLANCE:** The template CSS scaffold defines the exact style. Your output must completely resemble it in every way—colors, typography, spacing, layout, selectors, and patterns. When the HTML has more or fewer sections than the template example: extend or condense using the SAME styling. Use the same variables, values, and design language. The funnel must look identical to the selected template—only the content length varies. Extend the template to cover any additional classes from the HTML. Never omit a class that appears in the HTML.
+You are an expert CSS author. The template CSS is provided below and will be used AS-IS as the base. Your job: output ONLY additional rules for classes that appear in the HTML but are NOT styled in the template.
 
-**COMPLETE OUTPUT:** You MUST output the FULL CSS—every rule, every selector. Never truncate. Produce complete, production-ready CSS.
+**YOUR OUTPUT = DELTA ONLY:** Output ONLY CSS rules for selectors not already in the template. Use the SAME design tokens from the template (colors, fonts, spacing). If every class in the HTML is already covered by the template, output a single comment: /* All classes styled by template */
 
-Requirements: Mobile-first, clean typography, generous whitespace. Style .funnel-media (images), CTAs, sections, headings. Ensure body/section content has readable line-height (1.5–1.7) and spacing between paragraphs.
+**Classes in HTML:** ${classList || "(none found)"}
 
-Actual HTML to style (extract all classes and elements from this):
-\`\`\`html
-${html.length > 12000 ? html.slice(0, 12000) + "\n<!-- truncated for length -->" : html}
+**Template CSS (already applied—do not repeat):**
+\`\`\`css
+${templateCssBase}
 \`\`\`
 
-Template CSS scaffold (structure and style to follow):
-\`\`\`css
-${templateCssScaffold}
+**HTML to check for unstyled classes:**
+\`\`\`html
+${html.length > 12000 ? html.slice(0, 12000) + "\n<!-- truncated -->" : html}
+\`\`\``
+    : `${copyContext}
+
+You are an expert CSS author. Output the FULL CSS for this funnel. Style every class and element. Mobile-first, clean typography. Classes: ${classList || "(none)"}. Tags: ${tagList || "(none)"}.
+
+HTML:
+\`\`\`html
+${html.length > 12000 ? html.slice(0, 12000) + "\n<!-- truncated -->" : html}
 \`\`\``;
 
   const cssResult = await generateObject({
@@ -573,7 +653,11 @@ ${templateCssScaffold}
     prompt: cssPrompt,
     maxOutputTokens: 65536,
   });
-  let css = (cssResult.object.css ?? "").trim().replace(/^```(?:css)?\s*\n?|```\s*$/gm, "").trim();
+  let cssDelta = (cssResult.object.css ?? "").trim().replace(/^```(?:css)?\s*\n?|```\s*$/gm, "").trim();
+
+  let css = hasTemplateCss
+    ? templateCssBase + (cssDelta && !cssDelta.startsWith("/*") ? "\n\n/* Extended/overrides */\n" + cssDelta : "\n\n" + cssDelta)
+    : cssDelta;
 
   if (css.length < 50) {
     css = `* { box-sizing: border-box; }
