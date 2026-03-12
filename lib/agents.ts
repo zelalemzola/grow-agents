@@ -12,8 +12,8 @@ export const AGENTS: AgentCard[] = [
     slug: "translation",
     title: "Landing Page Translation",
     description:
-      "Translate existing landing pages into target languages while preserving layout and page structure.",
-    status: "coming-soon",
+      "Translate existing landing pages into target languages while preserving layout and page structure. Human-like quality with cultural adaptation.",
+    status: "live",
   },
   {
     slug: "policy-changes",
