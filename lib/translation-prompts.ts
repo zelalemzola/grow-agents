@@ -10,20 +10,31 @@ CRITICAL RULES:
 2. TRANSLATE ONLY TEXT: Leave all HTML markup, URLs, src attributes, and code unchanged. Only change the human-readable text between tags.
 3. CULTURAL ADAPTATION:
    - When translating TO English: Replace German/European names with culturally appropriate American names (preserve gender). Example: "Hans" → "John", "Maria" → "Mary".
-   - When translating TO German: Replace American names with German equivalents (preserve gender). Example: "John" → "Hans", "Sarah" → "Sandra".
+   - When translating TO German: Use AUTHENTIC, TRADITIONAL German names suitable for people aged 50+. Default to classic names that were common in Germany 50+ years ago:
+     • Men: Hans, Klaus, Wolfgang, Günther, Helmut, Dieter, Werner, Horst, Friedrich, Gerhard, etc.
+     • Women: Maria, Helga, Ingrid, Gisela, Brigitte, Renate, Ursula, Margot, Elisabeth, Monika, etc.
+     Do NOT use modern or international names (e.g. Kevin, Jason, Chantalle) for adult characters. Be consistent—always choose names that sound genuinely German for the 50+ demographic.
    - NATIONALITIES/PROFESSIONS: Adapt references. "An American doctor" → "Ein deutscher Arzt" when translating to German. "Ein deutscher Experte" → "An American expert" when translating to English.
-4. TONE: Match the original tone (formal, casual, urgent, etc.) in the target language. Use idioms and expressions natural to the target locale.
-5. OUTPUT: Return ONLY the translated HTML. No explanations, no markdown code fences, no preamble. Raw HTML only.`;
+4. TONE & INTENSITY: Preserve the EXACT meaning and marketing "hype" of the original. Do NOT soften, downplay, or reduce exaggeration. Match superlatives with superlatives. Keep urgency, emotional intensity, and persuasive language intact. Germans respond to strong marketing copy—translate enthusiastically.
+5. DATE FORMAT: When translating TO German, use German date format DD.MM.YYYY (e.g. 1.1.2026, 15.3.2026). Do NOT spell out month names (no "Januar", "1. Januar") or use US formats (MM/DD/YYYY).
+6. PRODUCT & MEDICINE NAMES: Localize product names, brand names, and medicine names into what they are actually called in the target language/country. Use the proper local term (e.g. German product name in Germany, not just German spelling of the English name). Be consistent—use the same localized term throughout the entire document.
+7. OUTPUT: Return ONLY the translated HTML. No explanations, no markdown code fences, no preamble. Raw HTML only.`;
 
 export function buildTranslationPrompt(
   html: string,
   fromLang: string,
   toLang: string,
+  chunkContext?: { index: number; total: number },
 ): string {
   const fromLabel = fromLang === "en" ? "English" : "German";
   const toLabel = toLang === "en" ? "English" : "German";
 
-  return `Translate the following HTML from ${fromLabel} to ${toLabel}. Preserve all HTML structure exactly. Only translate text content. Apply cultural adaptation for names and nationalities as described in your instructions.
+  const chunkNote =
+    chunkContext && chunkContext.total > 1
+      ? `\n\nNOTE: This is HTML fragment ${chunkContext.index + 1} of ${chunkContext.total}. Output ONLY the translated fragment—it will be concatenated with others. No wrappers, no explanations.`
+      : "";
+
+  return `Translate the following HTML from ${fromLabel} to ${toLabel}. Preserve all HTML structure exactly. Only translate text content. Apply cultural adaptation for names, dates, products, and nationalities as described in your instructions.${chunkNote}
 
 HTML to translate:
 ${html}`;

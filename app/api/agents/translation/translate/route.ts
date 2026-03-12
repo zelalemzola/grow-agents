@@ -1,6 +1,7 @@
 import {
   createUIMessageStream,
   createUIMessageStreamResponse,
+  generateText,
   streamText,
 } from "ai";
 import { NextResponse } from "next/server";
@@ -11,6 +12,7 @@ import {
   buildEditPrompt,
   TRANSLATION_SYSTEM_PROMPT,
 } from "@/lib/translation-prompts";
+import { splitHtmlIntoChunks } from "@/lib/html-chunker";
 import { getGateway } from "@/lib/ai-gateway";
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 
@@ -63,38 +65,86 @@ async function runTranslate(
   });
 
   const systemPrompt = TRANSLATION_SYSTEM_PROMPT;
-  const userPrompt = isEdit
-    ? buildEditPrompt(
-        input.html,
-        input.editComments ?? "",
+  const chunks = splitHtmlIntoChunks(input.html);
+  const useChunking = !isEdit && chunks.length > 1;
+
+  let translatedHtml: string;
+
+  if (useChunking) {
+    emit({
+      type: "status",
+      message: `Translating long document (${chunks.length} parts)...`,
+    });
+
+    const translatedChunks: string[] = [];
+
+    for (let i = 0; i < chunks.length; i++) {
+      emit({
+        type: "status",
+        message: `Translating part ${i + 1} of ${chunks.length}...`,
+      });
+
+      const userPrompt = buildTranslationPrompt(
+        chunks[i],
         input.fromLang,
         input.toLang,
-      )
-    : buildTranslationPrompt(input.html, input.fromLang, input.toLang);
+        { index: i, total: chunks.length },
+      );
 
-  let accumulatedHtml = "";
+      const result = await generateText({
+        model: gateway("openai/gpt-4.1"),
+        system: systemPrompt,
+        prompt: userPrompt,
+        maxOutputTokens: 65536,
+        temperature: 0.2,
+      });
 
-  const result = streamText({
-    model: gateway("openai/gpt-4.1"),
-    system: systemPrompt,
-    prompt: userPrompt,
-    maxOutputTokens: 65536,
-    temperature: 0.3,
-    onChunk: ({ chunk }) => {
-      if (chunk.type === "text-delta" && "text" in chunk) {
-        accumulatedHtml += chunk.text;
-        emit({
-          type: "html-stream",
-          payload: { value: accumulatedHtml },
-        });
-      }
-    },
-  });
+      let chunkHtml = result.text.trim();
+      chunkHtml = chunkHtml.replace(/^```(?:html)?\s*\n?|```\s*$/gm, "").trim();
+      translatedChunks.push(chunkHtml);
 
-  const fullText = await result.text;
+      const accumulated = translatedChunks.join("");
+      emit({
+        type: "html-stream",
+        payload: { value: accumulated },
+      });
+    }
 
-  let translatedHtml = fullText.trim();
-  translatedHtml = translatedHtml.replace(/^```(?:html)?\s*\n?|```\s*$/gm, "").trim();
+    translatedHtml = translatedChunks.join("");
+  } else {
+    const userPrompt = isEdit
+      ? buildEditPrompt(
+          input.html,
+          input.editComments ?? "",
+          input.fromLang,
+          input.toLang,
+        )
+      : buildTranslationPrompt(input.html, input.fromLang, input.toLang);
+
+    let accumulatedHtml = "";
+
+    const result = streamText({
+      model: gateway("openai/gpt-4.1"),
+      system: systemPrompt,
+      prompt: userPrompt,
+      maxOutputTokens: 65536,
+      temperature: 0.2,
+      onChunk: ({ chunk }) => {
+        if (chunk.type === "text-delta" && "text" in chunk) {
+          accumulatedHtml += chunk.text;
+          emit({
+            type: "html-stream",
+            payload: { value: accumulatedHtml },
+          });
+        }
+      },
+    });
+
+    const fullText = await result.text;
+
+    translatedHtml = fullText.trim();
+    translatedHtml = translatedHtml.replace(/^```(?:html)?\s*\n?|```\s*$/gm, "").trim();
+  }
 
   const fromLabel = input.fromLang === "en" ? "English" : "German";
   const toLabel = input.toLang === "en" ? "English" : "German";
