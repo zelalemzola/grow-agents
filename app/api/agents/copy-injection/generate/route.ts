@@ -183,10 +183,19 @@ Create enough sections so all ${paragraphs.length} paragraphs are assigned. Foll
   injectContentFromCopy(sectionPlan.sections, parsedData.objective);
   formatSectionPlanContentForHtml(sectionPlan.sections);
 
-  /* Prepend image placeholder to each testimonial section's content so it gets into the HTML */
+  const productImagesRaw = parsedData.productImages ?? [];
+  const hasProductImage = productImagesRaw.length > 0;
+
+  /* Prepend image placeholder to testimonial and CTA sections so it gets into the HTML */
   for (const s of sectionPlan.sections) {
     if (s.type === "testimonial" && s.id) {
       const imgPlaceholder = `<img src="{{image:${s.id}}}" alt="" class="funnel-media" style="width:100%;max-width:100%;height:auto;display:block;border-radius:12px;" />`;
+      s.content = (s.content ?? "").trim()
+        ? imgPlaceholder + "<br><br>" + (s.content ?? "")
+        : imgPlaceholder;
+    }
+    if (s.type === "cta" && s.id && hasProductImage) {
+      const imgPlaceholder = `<img src="{{image:${s.id}}}" alt="" class="funnel-media funnel-cta-product" style="width:100%;max-width:100%;height:auto;display:block;border-radius:12px;" />`;
       s.content = (s.content ?? "").trim()
         ? imgPlaceholder + "<br><br>" + (s.content ?? "")
         : imgPlaceholder;
@@ -203,7 +212,6 @@ Create enough sections so all ${paragraphs.length} paragraphs are assigned. Foll
   });
 
   const mediaPlaceholders = parseMediaPlaceholders(parsedData.objective);
-  const productImagesRaw = parsedData.productImages ?? [];
   const productImageBase64 = productImagesRaw
     .map((dataUrl) => {
       const m = /^data:image\/[^;]+;base64,(.+)$/.exec(dataUrl);
@@ -220,6 +228,8 @@ Create enough sections so all ${paragraphs.length} paragraphs are assigned. Foll
     imagePrompt: string | null;
     preferGif: boolean;
     isProductSection: boolean;
+    /** When true, use product image directly—no AI generation (for CTA/offer sections). */
+    useProductDirectly?: boolean;
   };
   const placeholderCandidates: Omit<ImageCandidate, "isProductSection">[] =
     mediaPlaceholders.length > 0
@@ -252,24 +262,48 @@ Create enough sections so all ${paragraphs.length} paragraphs are assigned. Foll
         preferGif: false,
       }));
 
+  const ctaCandidates: Omit<ImageCandidate, "isProductSection">[] =
+    productImageBase64.length > 0
+      ? sectionPlan.sections
+          .filter((s) => s.type === "cta" && s.id)
+          .map((s) => ({
+            id: s.id,
+            title: s.title,
+            content: (s.content ?? "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 600),
+            type: "cta" as const,
+            imagePrompt: null,
+            preferGif: false,
+          }))
+      : [];
+
   const imageCandidatesBase: Omit<ImageCandidate, "isProductSection">[] = [
     ...placeholderCandidates,
     ...testimonialCandidates,
+    ...ctaCandidates,
   ];
 
-  const imageCandidates: ImageCandidate[] =
-    productImageBase64.length > 0
-      ? await Promise.all(
-          imageCandidatesBase.map(async (c) => ({
-            ...c,
-            isProductSection: await classifyIsProductSection(
-              c.content,
-              parsedData.objective,
-              gateway("openai/gpt-4.1-mini"),
-            ),
-          })),
-        )
-      : imageCandidatesBase.map((c) => ({ ...c, isProductSection: false }));
+  const needsClassification = imageCandidatesBase.filter(
+    (c) => c.type !== "testimonial" && c.type !== "cta",
+  );
+  const classified = productImageBase64.length > 0
+    ? await Promise.all(
+        needsClassification.map((c) =>
+          classifyIsProductSection(c.content, parsedData.objective, gateway("openai/gpt-4.1-mini")),
+        ),
+      )
+    : needsClassification.map(() => false);
+  const classifyMap = new Map(needsClassification.map((c, i) => [c.id, classified[i] ?? false]));
+
+  const imageCandidates: ImageCandidate[] = imageCandidatesBase.map((c) => {
+    if (c.type === "testimonial") return { ...c, isProductSection: true, useProductDirectly: false };
+    if (c.type === "cta" && productImageBase64.length > 0)
+      return { ...c, isProductSection: true, useProductDirectly: true };
+    return {
+      ...c,
+      isProductSection: classifyMap.get(c.id) ?? false,
+      useProductDirectly: false,
+    };
+  });
 
   const defaultProductGuidelines =
     productImageBase64.length > 0
@@ -281,15 +315,17 @@ Create enough sections so all ${paragraphs.length} paragraphs are assigned. Foll
       .filter(Boolean)
       .join("\n\n") || undefined;
 
-  const funnelContext = {
+  const sectionSummaries = sectionPlan.sections.map((s) => ({
+    id: s.id,
+    title: s.title,
+    contentPreview: s.content.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 120),
+  }));
+  const allSectionIds = sectionPlan.sections.map((s) => s.id);
+  const funnelContextBase = {
     objective: parsedData.objective,
     pageName: sectionPlan.pageName,
     productGuidelines: productGuidelinesFinal,
-    sectionSummaries: sectionPlan.sections.map((s) => ({
-      id: s.id,
-      title: s.title,
-      contentPreview: s.content.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 120),
-    })),
+    sectionSummaries,
   };
 
   emit({
@@ -317,6 +353,10 @@ Create enough sections so all ${paragraphs.length} paragraphs are assigned. Foll
   const testimonialSectionIds = sectionPlan.sections
     .filter((s) => s.type === "testimonial")
     .map((s) => s.id);
+  const ctaSectionIds =
+    hasProductImage
+      ? sectionPlan.sections.filter((s) => s.type === "cta").map((s) => s.id)
+      : [];
 
   const placeholderBlock =
     mediaPlaceholders.length > 0
@@ -336,6 +376,12 @@ IDs in order of appearance: ${placeholderIdList}
 `
       : "";
 
+  const ctaImageBlock =
+    ctaSectionIds.length > 0
+      ? `
+**CTA IMAGES (REQUIRED):** For EACH CTA/offer section, you MUST include an image slot. Use <img src="{{image:SECTION_ID}}" alt="" class="funnel-media funnel-cta-product" style="width:100%;max-width:100%;height:auto;display:block;border-radius:12px;" /> with the EXACT section id. Section IDs: ${ctaSectionIds.join(", ")}. Each CTA needs id="SECTION_ID" on its section/div.`
+      : "";
+
   const scaffoldHasPlaceholder = template?.html_scaffold?.trim().includes("{{content}}") || template?.html_scaffold?.trim().includes("{{sections}}");
   const hasTemplate = Boolean(template?.html_scaffold?.trim());
 
@@ -345,6 +391,9 @@ IDs in order of appearance: ${placeholderIdList}
   }
   if (testimonialSectionIds.length > 0) {
     imageSlotsParts.push(`Testimonial sections: Content includes img tags—preserve them. IDs: ${testimonialSectionIds.join(", ")}.`);
+  }
+  if (ctaSectionIds.length > 0) {
+    imageSlotsParts.push(`CTA sections: Content includes img tags—preserve them. IDs: ${ctaSectionIds.join(", ")}.`);
   }
   const imageSlotsBlock =
     imageSlotsParts.length > 0
@@ -371,14 +420,17 @@ ${imageSlotsBlock}
 ${templateReplicationBlock}
 ${placeholderBlock}
 ${testimonialImageBlock}
+${ctaImageBlock}
 **EXACT COPY - NOTHING ADDED OR REMOVED:** Output the section plan content EXACTLY as provided. Do not add, omit, or rephrase a single line. Every paragraph, review, and disclaimer from the plan must appear verbatim in the HTML. **CRITICAL:** Preserve any <img src="{{image:SECTION_ID}}" ... /> tags that appear in section content—they must appear in your output unchanged.
 
-**CONTENT FORMATTING (CRITICAL):** Apply proper HTML styling to the content. Preserve spacing, emphasis, and structure from the section plan:
+**CONTENT FORMATTING (CRITICAL):** Apply proper HTML styling by analyzing the copy structure. Preserve spacing, emphasis, and structure from the section plan:
 - Paragraph breaks → <br><br> between each paragraph
 - Line breaks → <br> for breathing room within paragraphs
 - Bold key phrases → <b>text</b> for emphasis (preserve or add where content has **text** or strong emphasis)
 - Italics → <i>text</i> for quotes and subtle emphasis (preserve or add where content has *text* or italics)
-- Do not paste raw unformatted text—no wall-of-text. Apply tags based on structure.
+- **Lists:** Bullet points → <ul class="content-list"><li>item</li></ul>; numbered items → <ol class="content-list"><li>item</li></ol>
+- **Blockquotes:** Standalone or dramatic quotes → <blockquote class="content-quote">...</blockquote>
+- Do not paste raw unformatted text—no wall-of-text. Apply semantic markup based on content structure.
 **COMPLETE OUTPUT:** You MUST output the FULL HTML with EVERY section from the plan. Never truncate, abbreviate, or skip sections—no matter how long. Use semantic HTML. No markdown fences.
 
 ADAPTIVE LAYOUT:
@@ -402,9 +454,19 @@ ${templateHtmlScaffold}
 
   const IMAGE_CONCURRENCY = 1;
 
+  const productDataUrl = productImagesRaw[0] ?? null;
+
   async function generateImageForSection(
     section: ImageCandidate,
   ): Promise<{ sectionId: string; dataUrl: string }> {
+    if (section.useProductDirectly && productDataUrl) {
+      emit({
+        type: "reasoning",
+        message: `Using product image directly for CTA "${section.id}" (no generation).`,
+        payload: { sectionId: section.id },
+      });
+      return { sectionId: section.id, dataUrl: productDataUrl };
+    }
     const useProductImage =
       (section.isProductSection || section.type === "testimonial") &&
       productImageBase64.length > 0 &&
@@ -415,6 +477,7 @@ ${templateHtmlScaffold}
       payload: { sectionId: section.id },
     });
     try {
+      const differentFromIds = allSectionIds.filter((id) => id !== section.id);
       const { description: visualDescription, sceneType } =
         await buildVisualDescription(
           {
@@ -427,7 +490,11 @@ ${templateHtmlScaffold}
             isProductSection: section.isProductSection || section.type === "testimonial",
           },
           gateway("openai/gpt-4.1-mini"),
-          funnelContext,
+          {
+            ...funnelContextBase,
+            differentFromIds,
+            sectionIndex: allSectionIds.indexOf(section.id),
+          },
         );
       const { dataUrl } = await generateFunnelMedia({
         prompt: visualDescription,
@@ -503,12 +570,17 @@ ${templateHtmlScaffold}
       const batchJson = JSON.stringify({ sections: batch }, null, 2);
       const batchHasTestimonials = batch.some((s) => s.type === "testimonial");
       const batchTestimonialIds = batch.filter((s) => s.type === "testimonial").map((s) => s.id);
+      const batchHasCta = batch.some((s) => s.type === "cta");
+      const batchCtaIds = batch.filter((s) => s.type === "cta").map((s) => s.id);
       const batchTestimonialBlock = batchHasTestimonials
         ? `\n**TESTIMONIAL IMAGES (REQUIRED):** Each testimonial content includes an img tag—preserve it. IDs: ${batchTestimonialIds.join(", ")}. Include even if template has no image slots.\n`
         : "";
+      const batchCtaBlock = batchHasCta && ctaSectionIds.length > 0
+        ? `\n**CTA IMAGES (REQUIRED):** Each CTA content includes an img tag—preserve it. IDs: ${batchCtaIds.join(", ")}.\n`
+        : "";
       const batchImageSlotsNote =
-        mediaPlaceholders.length > 0 || batchHasTestimonials
-          ? `\n**IMAGE SLOTS (MANDATORY):** Include all image slots—replace [image]/[gif] with img tags, preserve testimonial img tags. Template structure is for styling only.\n`
+        mediaPlaceholders.length > 0 || batchHasTestimonials || batchHasCta
+          ? `\n**IMAGE SLOTS (MANDATORY):** Include all image slots—replace [image]/[gif] with img tags, preserve testimonial and CTA img tags. Template structure is for styling only.\n`
           : "";
       const batchPrompt = `${copyContext}
 
@@ -518,6 +590,7 @@ You are an expert HTML funnel builder. Output ONLY the HTML for these ${batch.le
 ${batchImageSlotsNote}
 ${placeholderBlock}
 ${batchTestimonialBlock}
+${batchCtaBlock}
 **EXACT COPY:** Output the section content EXACTLY as provided. Preserve any <img src="{{image:SECTION_ID}}" ... /> tags in the content unchanged. No truncation, no omission.
 
 Template HTML scaffold (structure to replicate exactly):
@@ -554,15 +627,18 @@ ${batchJson}`;
     ? replacePlaceholdersInHtml(htmlRaw, mediaPlaceholders)
     : htmlRaw;
 
-  /* Ensure testimonial sections have image slots—inject if HTML model missed them */
+  /* Ensure testimonial and CTA sections have image slots—inject if HTML model missed them */
   const testimonialImgTag = (id: string) =>
     `<img src="{{image:${id}}}" alt="" class="funnel-media" style="width:100%;max-width:100%;height:auto;display:block;border-radius:12px;" />`;
-  for (const tid of testimonialSectionIds) {
+  const ctaImgTag = (id: string) =>
+    `<img src="{{image:${id}}}" alt="" class="funnel-media funnel-cta-product" style="width:100%;max-width:100%;height:auto;display:block;border-radius:12px;" />`;
+  for (const tid of [...testimonialSectionIds, ...ctaSectionIds]) {
     if (!html.includes(`{{image:${tid}}}`)) {
       const escaped = tid.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       const sectionMatch = html.match(new RegExp(`(<(?:section|div)[^>]*id=["']${escaped}["'][^>]*>)`, "i"));
       if (sectionMatch) {
-        html = html.replace(sectionMatch[1], sectionMatch[1] + "\n" + testimonialImgTag(tid));
+        const imgTag = ctaSectionIds.includes(tid) ? ctaImgTag(tid) : testimonialImgTag(tid);
+        html = html.replace(sectionMatch[1], sectionMatch[1] + "\n" + imgTag);
       }
     }
   }
@@ -619,13 +695,18 @@ ${html}
   const templateCssBase = (template?.css_scaffold ?? "").trim();
   const hasTemplateCss = templateCssBase.length > 0;
 
+  const contentStructureNote =
+    classes.has("content-list") || classes.has("content-quote")
+      ? `\n**CONTENT-STRUCTURE CLASSES (style these to match template):** .content-list (ul/ol)—styled list with appropriate spacing, bullets/numbers; .content-quote (blockquote)—distinct quote styling, optionally left border or italic. Match the template's typography and colors.\n`
+      : "";
+
   const cssPrompt = hasTemplateCss
     ? `${copyContext}
 
 You are an expert CSS author. The template CSS is provided below and will be used AS-IS as the base. Your job: output ONLY additional rules for classes that appear in the HTML but are NOT styled in the template.
 
 **YOUR OUTPUT = DELTA ONLY:** Output ONLY CSS rules for selectors not already in the template. Use the SAME design tokens from the template (colors, fonts, spacing). If every class in the HTML is already covered by the template, output a single comment: /* All classes styled by template */
-
+${contentStructureNote}
 **Classes in HTML:** ${classList || "(none found)"}
 
 **Template CSS (already applied—do not repeat):**
@@ -640,6 +721,7 @@ ${html.length > 12000 ? html.slice(0, 12000) + "\n<!-- truncated -->" : html}
     : `${copyContext}
 
 You are an expert CSS author. Output the FULL CSS for this funnel. Style every class and element. Mobile-first, clean typography. Classes: ${classList || "(none)"}. Tags: ${tagList || "(none)"}.
+${contentStructureNote}
 
 HTML:
 \`\`\`html
@@ -666,6 +748,8 @@ img, video { max-width: 100%; height: auto; display: block; }
 section { padding: 1.5rem 1rem; max-width: 720px; margin: 0 auto; }
 h1, h2, h3 { margin-top: 0; margin-bottom: 0.5em; }
 p { margin: 0 0 1em; }
+ul.content-list, ol.content-list { margin: 1em 0; padding-left: 1.5em; }
+blockquote.content-quote { margin: 1em 0; padding-left: 1em; border-left: 3px solid #ccc; font-style: italic; color: #444; }
 `;
   }
 

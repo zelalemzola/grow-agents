@@ -289,7 +289,7 @@ export const FUNNEL_GENERATION_EXTRA_SYSTEM_PROMPT = `
     - Do NOT repeat the same reviewer
     - Extract ALL reviews from the copy—every single one. Do not limit. Create ONE section per review (e.g. testimonial-1, testimonial-2) so each gets its own image.
 12. Identify the OFFER section (IMPORTANT - always extract or create!):
-    - Extract call-to-action text, pricing info, urgency elements, bonuses
+    - Use type "cta" for the offer section. Extract call-to-action text, pricing info, urgency elements, bonuses
     - Create a compelling offer title (e.g., "Limited Time Offer", "Special Deal", "Exclusive Discount")
     - The offer content should summarize: what they get, any discounts/bonuses, urgency/scarcity
     - If no explicit offer exists, create one based on the product being promoted
@@ -302,7 +302,7 @@ export const FUNNEL_GENERATION_EXTRA_SYSTEM_PROMPT = `
     - Make it scannable - readers should get the gist quickly
 
 ## BODY SECTION HTML FORMATTING (CRITICAL - APPLY TO ALL CONTENT!):
-The body section content AND case study content will be inserted directly into HTML. You MUST return HTML-formatted content for both. Apply proper spacing, new lines, and text styling:
+The body section content AND case study content will be inserted directly into HTML. You MUST return HTML-formatted content for both. **ANALYZE the copy structure** and apply the correct semantic HTML for each element type:
 
 - **Paragraph breaks:** Use <br><br> between paragraphs (every new paragraph = <br><br>)
 - **Line breaks:** Use <br> within paragraphs for dramatic pause or breathing room
@@ -310,6 +310,12 @@ The body section content AND case study content will be inserted directly into H
 - **Italic:** Use <i>text</i> for quotes, italics, subtle emphasis
 - **Spacing:** Ensure readable rhythm—no wall-of-text. Break up long blocks.
 - DO NOT use \\n or \\n\\n - use HTML tags only!
+
+**CONTENT-STRUCTURE AWARENESS (apply correct markup by analyzing the copy):**
+- **Bullet lists:** Content with bullet points or "•" → wrap in <ul class="content-list"> with <li> per item
+- **Numbered lists:** Content with "1.", "2.", "First,", "Secondly," → wrap in <ol class="content-list"> with <li> per item
+- **Blockquotes / pull quotes:** Standalone quoted text, testimonials within body, or dramatic quotes → wrap in <blockquote class="content-quote"> for distinct styling
+- **Key quotes:** Inline quoted speech (e.g. "I couldn't believe it") → use <i> or <q> for subtle emphasis
 
 ## BODY SECTION RHYTHM EXAMPLES (VARY THESE!):
 

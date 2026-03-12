@@ -71,6 +71,10 @@ export interface FunnelContextForImage {
   sectionSummaries?: Array<{ id: string; title: string; contentPreview: string }>;
   /** Optional product-specific image/GIF guidelines (e.g. "use before/after, doctor in lab"). Injected for product sections. */
   productGuidelines?: string;
+  /** Section IDs to explicitly differentiate from—ensures unique image per section */
+  differentFromIds?: string[];
+  /** This section's index in the funnel (0-based) for uniqueness hints */
+  sectionIndex?: number;
 }
 
 /** Scene-specific style hints for product sections */
@@ -78,7 +82,7 @@ const SCENE_TYPE_HINTS: Record<string, string> = {
   before_after: "Split or side-by-side composition, transformation reveal, realistic before/after, authentic results.",
   doctor_recommendation: "Doctor or expert in clinical/lab setting holding the product, professional but approachable, recommending or demonstrating it. Show the doctor clearly holding the product.",
   testimonial_with_product:
-    "SELFIE-STYLE: Person taking the photo themselves, first-person POV, holding or using the product. Happy, satisfied, genuine. MUST match the testimonial subject's gender exactly (woman or man as stated in content). Candid selfie feel—not a professional photo.",
+    "SELFIE-STYLE (exactly like real customer photo): Person taking the photo themselves, arm extended, first-person POV. Person smiling warmly at camera, holding the product prominently with both hands—product label clearly visible facing camera. Indoor home setting (kitchen, living room, cozy background). Natural window light, candid, not staged. MUST match the testimonial subject's gender (woman or man from content). Authentic testimonial selfie—older adult, relaxed, satisfied.",
   product_mechanism: "Product clearly visible. Clear visual of how product works, mechanism in action, educational and precise. Show the product in use or demonstrating its mechanism.",
   product_intro: "Product clearly visible in frame, editorial presentation, not staged advertising. Product is the focal point.",
   transformation:
@@ -118,7 +122,7 @@ export async function buildVisualDescription(
     body: "BODY IMAGE: Visually explain this section's single core idea. One idea = one image. Must simplify and clarify what the reader just read. If content mentions a person's result/experience with a product: SELFIE of that person holding/using it. Match person's gender (woman/man) from content. Explain, don't decorate.",
     cta: "CTA IMAGE: Show the outcome or transformation the CTA promises. Subtle, editorial. No ad-like elements.",
     testimonial:
-      "TESTIMONIAL IMAGE (MANDATORY SELFIE): Selfie-style photo—person taking the photo themselves, first-person POV, holding or using the product. Happy, satisfied, candid. MUST match the reviewer's gender exactly (woman or man as implied by name, e.g. Sarah=woman, John=man, or pronouns in quote). Person clearly holding or using the product in frame.",
+      "TESTIMONIAL IMAGE (MANDATORY SELFIE—like real customer review photo): Person taking the photo themselves, arm extended, first-person POV. Smiling warmly at camera, holding product prominently with both hands—product label visible. Indoor home setting (kitchen, living room). Natural light, candid. MUST match reviewer's gender (Sarah/Lisa=woman, John/Mike=man). Older adult, relaxed, authentic testimonial feel.",
     proof: "PROOF IMAGE: Show evidence—study scene, mechanism, or result. Educational, clinical-but-human.",
     image: "IMAGE SECTION: Illustrate the key concept of this section. If about a person's experience: selfie of them with the product. Match gender. Direct visual support for the copy.",
     faq: "FAQ IMAGE: Show the situation or question the FAQ addresses. Clear, low clutter.",
@@ -143,10 +147,13 @@ ${otherSections.map((s) => `- ${s.id} (${s.title}): ${s.contentPreview.slice(0, 
 `
     : "";
 
+  const differentFromList = funnelContext?.differentFromIds?.length
+    ? funnelContext.differentFromIds.map((id) => id).join(", ")
+    : otherSections.map((s) => s.id).join(", ");
   const uniquenessBlock =
-    otherSections.length > 0 || section.id
+    (otherSections.length > 0 || differentFromList || section.id)
       ? `
-UNIQUENESS (CRITICAL): This image is for section "${section.id ?? "this section"}" only. Each section gets a DIFFERENT image. Your description MUST be unique—different person (when showing people), different composition, different setting, angle, or moment. Never describe a generic scene that could apply to multiple sections. Include specific differentiating details.`
+UNIQUENESS (CRITICAL): This image is for section "${section.id ?? "this section"}" only. Each section gets a DIFFERENT image. Your description MUST be unique and visually distinct from sections: ${differentFromList || "other sections"}. Use different person (when showing people), different composition, different setting, angle, or moment. Never describe a generic scene that could apply to multiple sections. Include specific differentiating details (e.g. different room, different angle, different expression).`
       : "";
 
   const productGuidelinesBlock =
