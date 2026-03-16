@@ -40,7 +40,7 @@ export const AGENTS: AgentCard[] = [
     slug: "ad-image-generation",
     title: "Ad Image Generation",
     description:
-      "Produce ad-ready image variants based on funnel stage, angle, and platform requirements.",
-    status: "coming-soon",
+      "Generate up to 5 ad-ready images at once from separate prompts, with optional product reference and per-image regeneration from comments.",
+    status: "live",
   },
 ];

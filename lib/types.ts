@@ -47,6 +47,19 @@ export interface FunnelListItem {
   updated_at: string;
 }
 
+/** Ad-image-generation project payload stored in objective (JSON) */
+export interface AdImageObjective {
+  prompts: [string, string, string, string, string];
+  productImageUrl?: string | null;
+}
+
+/** Ad-image project: funnel with agent_slug "ad-image-generation". latest_images keys "1".."5" = generated images. */
+export interface AdImageProjectRecord extends FunnelRecord {
+  agent_slug: "ad-image-generation";
+  objective: string; // JSON string of AdImageObjective
+  latest_images: Record<string, string>; // "1".."5" = image URLs; "product" = optional product ref
+}
+
 export interface FunnelVersionRecord {
   id: string;
   funnel_id: string;
