@@ -40,6 +40,27 @@ HTML to translate:
 ${html}`;
 }
 
+/** Prompt when translating only the inner HTML of <body> (head and scripts were stripped). */
+export function buildBodyOnlyTranslationPrompt(
+  bodyInnerHtml: string,
+  fromLang: string,
+  toLang: string,
+  chunkContext?: { index: number; total: number },
+): string {
+  const fromLabel = fromLang === "en" ? "English" : "German";
+  const toLabel = toLang === "en" ? "English" : "German";
+
+  const chunkNote =
+    chunkContext && chunkContext.total > 1
+      ? ` This is fragment ${chunkContext.index + 1} of ${chunkContext.total}. Output ONLY this fragment—it will be concatenated with others.`
+      : "";
+
+  return `Translate the following HTML from ${fromLabel} to ${toLabel}. This is the INNER HTML of a <body> tag only (the rest of the document is unchanged). Preserve all HTML structure. Do NOT add <!DOCTYPE>, <html>, <head>, or <body> tags. Preserve any comment placeholders exactly as-is (e.g. <!--SCRIPT_PLACEHOLDER_0-->). Only translate human-readable text.${chunkNote}
+
+Body inner HTML to translate:
+${bodyInnerHtml}`;
+}
+
 export function buildEditPrompt(
   html: string,
   editComments: string,

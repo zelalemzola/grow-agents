@@ -9,10 +9,15 @@ import { z } from "zod";
 
 import {
   buildTranslationPrompt,
+  buildBodyOnlyTranslationPrompt,
   buildEditPrompt,
   TRANSLATION_SYSTEM_PROMPT,
 } from "@/lib/translation-prompts";
 import { splitHtmlIntoChunks } from "@/lib/html-chunker";
+import {
+  extractBodyForTranslation,
+  reassembleHtml,
+} from "@/lib/html-extract-body";
 import { getGateway } from "@/lib/ai-gateway";
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 
@@ -65,15 +70,26 @@ async function runTranslate(
   });
 
   const systemPrompt = TRANSLATION_SYSTEM_PROMPT;
-  const chunks = splitHtmlIntoChunks(input.html);
+
+  // When not editing: try to translate only body content (head + scripts stay out of the request)
+  const extractResult = !isEdit ? extractBodyForTranslation(input.html) : { ok: false as const };
+  const extracted =
+    extractResult.ok === true ? extractResult : null;
+  const extractedOk = extracted !== null;
+
+  const contentToTranslate = extractedOk
+    ? extracted!.bodyForTranslation
+    : input.html;
+
+  const chunks = splitHtmlIntoChunks(contentToTranslate);
   const useChunking = !isEdit && chunks.length > 1;
 
-  let translatedHtml: string;
+  let translatedContent: string;
 
   if (useChunking) {
     emit({
       type: "status",
-      message: `Translating long document (${chunks.length} parts)...`,
+      message: `Translating ${extractedOk ? "body content" : "document"} (${chunks.length} parts)...`,
     });
 
     const translatedChunks: string[] = [];
@@ -84,12 +100,15 @@ async function runTranslate(
         message: `Translating part ${i + 1} of ${chunks.length}...`,
       });
 
-      const userPrompt = buildTranslationPrompt(
-        chunks[i],
-        input.fromLang,
-        input.toLang,
-        { index: i, total: chunks.length },
-      );
+      const userPrompt = extractedOk
+        ? buildBodyOnlyTranslationPrompt(chunks[i], input.fromLang, input.toLang, {
+            index: i,
+            total: chunks.length,
+          })
+        : buildTranslationPrompt(chunks[i], input.fromLang, input.toLang, {
+            index: i,
+            total: chunks.length,
+          });
 
       const result = await generateText({
         model: gateway("openai/gpt-4.1"),
@@ -106,20 +125,22 @@ async function runTranslate(
       const accumulated = translatedChunks.join("");
       emit({
         type: "html-stream",
-        payload: { value: accumulated },
+        payload: {
+          value: extractedOk
+            ? reassembleHtml(extracted!.prefix, accumulated, extracted!.suffix, extracted!.scripts)
+            : accumulated,
+        },
       });
     }
 
-    translatedHtml = translatedChunks.join("");
-  } else {
-    const userPrompt = isEdit
-      ? buildEditPrompt(
-          input.html,
-          input.editComments ?? "",
-          input.fromLang,
-          input.toLang,
-        )
-      : buildTranslationPrompt(input.html, input.fromLang, input.toLang);
+    translatedContent = translatedChunks.join("");
+  } else if (isEdit) {
+    const userPrompt = buildEditPrompt(
+      input.html,
+      input.editComments ?? "",
+      input.fromLang,
+      input.toLang,
+    );
 
     let accumulatedHtml = "";
 
@@ -141,10 +162,48 @@ async function runTranslate(
     });
 
     const fullText = await result.text;
+    translatedContent = fullText.trim();
+    translatedContent = translatedContent.replace(/^```(?:html)?\s*\n?|```\s*$/gm, "").trim();
+  } else {
+    const userPrompt = extractedOk
+      ? buildBodyOnlyTranslationPrompt(contentToTranslate, input.fromLang, input.toLang)
+      : buildTranslationPrompt(contentToTranslate, input.fromLang, input.toLang);
 
-    translatedHtml = fullText.trim();
-    translatedHtml = translatedHtml.replace(/^```(?:html)?\s*\n?|```\s*$/gm, "").trim();
+    let accumulatedHtml = "";
+
+    const result = streamText({
+      model: gateway("openai/gpt-4.1"),
+      system: systemPrompt,
+      prompt: userPrompt,
+      maxOutputTokens: 65536,
+      temperature: 0.2,
+      onChunk: ({ chunk }) => {
+        if (chunk.type === "text-delta" && "text" in chunk) {
+          accumulatedHtml += chunk.text;
+          const displayValue = extractedOk
+            ? reassembleHtml(extracted!.prefix, accumulatedHtml, extracted!.suffix, extracted!.scripts)
+            : accumulatedHtml;
+          emit({
+            type: "html-stream",
+            payload: { value: displayValue },
+          });
+        }
+      },
+    });
+
+    const fullText = await result.text;
+    translatedContent = fullText.trim();
+    translatedContent = translatedContent.replace(/^```(?:html)?\s*\n?|```\s*$/gm, "").trim();
   }
+
+  const translatedHtml = extractedOk
+    ? reassembleHtml(
+        extracted!.prefix,
+        translatedContent,
+        extracted!.suffix,
+        extracted!.scripts,
+      )
+    : translatedContent;
 
   const fromLabel = input.fromLang === "en" ? "English" : "German";
   const toLabel = input.toLang === "en" ? "English" : "German";
