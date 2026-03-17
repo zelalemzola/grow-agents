@@ -13,8 +13,18 @@ export interface GenerateAdImageOptions {
   productImageBase64?: string | null;
 }
 
+/** System context: these are AD images for real advertising, must be hyper-realistic. */
+const AD_IMAGE_CONTEXT = `IMPORTANT: These images are ADVERTISEMENT IMAGES that will be used to advertise products to real people. They must be hyper-realistic and indistinguishable from professional product photography. Real customers will see these—quality and authenticity are critical.`;
+
+const PRODUCT_FIDELITY_INSTRUCTION = `CRITICAL - PRODUCT MATCHING (when reference image is provided):
+The reference image shows the EXACT product that must appear in the ad. You MUST:
+- Show the product looking IDENTICAL to the reference: same shape, size, colors, packaging, label, and branding
+- Do NOT substitute a generic or similar-looking product—replicate the reference product exactly
+- If the scene shows a person holding the product, the product in their hands must look like the reference, not a random substitute
+- Match proportions, texture, and visual details precisely. Real consumers will compare the ad to the actual product.`;
+
 function buildAdImagePrompt(userPrompt: string): string {
-  return `${userPrompt.trim()}\n\n${IMAGE_MODEL_STYLE_DIRECTIVE}`;
+  return `${AD_IMAGE_CONTEXT}\n\n${userPrompt.trim()}\n\n${IMAGE_MODEL_STYLE_DIRECTIVE}`;
 }
 
 /**
@@ -36,7 +46,7 @@ export async function generateAdImage(
           { type: "image" as const, image: productImageBase64 },
           {
             type: "text" as const,
-            text: `${fullPrompt}\n\nIncorporate the product from the reference image into this scene. Match the product's appearance exactly.`,
+            text: `${fullPrompt}\n\n${PRODUCT_FIDELITY_INSTRUCTION}\n\nPlace the product from the reference image into this scene. The product in your output must look EXACTLY like the one in the reference—same packaging, colors, shape, and branding. Do not show a generic substitute.`,
           },
         ] as unknown as string,
         aspectRatio: "16:9",

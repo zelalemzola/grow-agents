@@ -21,7 +21,8 @@ import {
 import { getGateway } from "@/lib/ai-gateway";
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 
-export const maxDuration = 120;
+/** Allow long-running translations (e.g. 300+ pages) - user is patient for accuracy */
+export const maxDuration = 300;
 
 const translateSchema = z.object({
   html: z.string().min(1, "HTML content is required"),
@@ -82,6 +83,7 @@ async function runTranslate(
     : input.html;
 
   const chunks = splitHtmlIntoChunks(contentToTranslate);
+  /** Always chunk when body is large - prevents truncation and hallucination */
   const useChunking = !isEdit && chunks.length > 1;
 
   let translatedContent: string;

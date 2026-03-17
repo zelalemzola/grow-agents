@@ -1,14 +1,16 @@
 /**
- * Splits HTML into chunks at safe tag boundaries to avoid truncation
- * and broken output when translating long documents.
+ * Splits HTML into chunks at safe tag boundaries to avoid truncation,
+ * hallucination, and broken output when translating long documents.
+ * Smaller chunks = more accurate translation with less risk of the model
+ * skipping, summarizing, or truncating content.
  */
 
-/** ~32k chars ≈ 8k tokens - keeps each chunk within model limits */
-const CHUNK_SIZE = 32_000;
+/** ~12k chars ≈ 3k tokens - conservative to prevent truncation/hallucination */
+const CHUNK_SIZE = 12_000;
 
-/** Tags we can safely split after (closing tags) */
+/** Tags we can safely split after (closing tags) - block-level boundaries */
 const SPLIT_TAG_PATTERN =
-  /<\/(section|article|div|main|header|footer|aside|blockquote|figure|p|li|h[1-6])>/gi;
+  /<\/(section|article|div|main|header|footer|aside|nav|blockquote|figure|figcaption|p|li|h[1-6]|table|tbody|tr|form|ul|ol)>/gi;
 
 export function splitHtmlIntoChunks(html: string): string[] {
   if (html.length <= CHUNK_SIZE) {

@@ -10,6 +10,7 @@ import {
   Undo2,
   ChevronDown,
   Download,
+  X,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -37,6 +38,9 @@ export function AdImageProjectDetail({ projectId }: { projectId: string }) {
   const [previousImageByIndex, setPreviousImageByIndex] = useState<
     Record<number, string>
   >({});
+  const [lightbox, setLightbox] = useState<{ src: string; index: number } | null>(
+    null,
+  );
 
   const loadProject = useCallback(async () => {
     const res = await fetch(
@@ -326,11 +330,17 @@ export function AdImageProjectDetail({ projectId }: { projectId: string }) {
                   }`}
                 >
                   {src ? (
-                    <img
-                      src={src}
-                      alt={`Image ${num}`}
-                      className="h-full min-h-[160px] w-full object-cover"
-                    />
+                    <button
+                      type="button"
+                      onClick={() => setLightbox({ src, index: num })}
+                      className="h-full min-h-[160px] w-full cursor-pointer focus:outline-none focus:ring-2 focus:ring-fuchsia-500/50"
+                    >
+                      <img
+                        src={src}
+                        alt={`Image ${num}`}
+                        className="h-full w-full object-cover"
+                      />
+                    </button>
                   ) : (
                     <div className="flex min-h-[160px] items-center justify-center text-muted-foreground">
                       No image
@@ -355,16 +365,6 @@ export function AdImageProjectDetail({ projectId }: { projectId: string }) {
                       Undo
                     </Button>
                   )}
-                  {src && !isRegenerating && (
-                    <button
-                      type="button"
-                      onClick={() => handleDownload(num, src)}
-                      className="absolute bottom-2 right-2 flex size-8 items-center justify-center rounded-md bg-black/40 text-white/80 opacity-70 transition-opacity hover:opacity-100 hover:bg-black/50"
-                      title="Download image"
-                    >
-                      <Download className="size-3.5" />
-                    </button>
-                  )}
                 </div>
                 {prompts[num - 1] && (
                   <p className="line-clamp-2 border-t border-border/60 p-2 text-[11px] text-muted-foreground">
@@ -376,6 +376,53 @@ export function AdImageProjectDetail({ projectId }: { projectId: string }) {
           })}
         </div>
       </section>
+
+      {/* Full-screen lightbox: click image to open, Download + Close */}
+      {lightbox && (
+        <div
+          className="fixed inset-0 z-50 flex flex-col bg-black/95"
+          onClick={() => setLightbox(null)}
+          role="presentation"
+        >
+          <div className="absolute right-4 top-4 flex gap-2">
+            <Button
+              size="lg"
+              className="gap-2 bg-white text-black hover:bg-white/90"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleDownload(lightbox.index, lightbox.src);
+              }}
+            >
+              <Download className="size-5" />
+              Download
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-12 rounded-full bg-white/10 text-white hover:bg-white/20"
+              onClick={(e) => {
+                e.stopPropagation();
+                setLightbox(null);
+              }}
+            >
+              <X className="size-6" />
+            </Button>
+          </div>
+          <div
+            className="flex flex-1 items-center justify-center p-8"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <img
+              src={lightbox.src}
+              alt={`Image ${lightbox.index}`}
+              className="max-h-[90vh] max-w-[90vw] object-contain"
+            />
+          </div>
+          <p className="pb-4 text-center text-sm text-white/60">
+            Image {lightbox.index} · Click outside to close
+          </p>
+        </div>
+      )}
     </div>
   );
 }

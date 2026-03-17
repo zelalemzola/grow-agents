@@ -1,8 +1,13 @@
 /**
  * Extracts body content for translation and reassembles full HTML.
- * - Keeps <head> and everything before <body> out of the translation request.
- * - Replaces <script>...</script> in body with placeholders so scripts are not
- *   sent to the model (and are pasted back after translation).
+ *
+ * Translation flow (per user requirements):
+ * 1. PREFIX: Everything above <body> (doctype, html, head) + opening <body...> — passed through as-is.
+ * 2. BODY: Only the inner content of <body> is sent for translation (in chunks).
+ * 3. SUFFIX: Closing </body> and everything below — passed through as-is.
+ *
+ * Scripts: <script>...</script> in body are replaced with placeholders so they are
+ * not sent to the model; they are pasted back unchanged after translation.
  * Handles </script> inside script strings via a simple quote-aware scan.
  */
 
