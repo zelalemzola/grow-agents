@@ -203,10 +203,12 @@ Nothing should resemble a paid advertisement.
 
 # Content-Section Alignment (CRITICAL)
 
-Each image must depict EXACTLY what its section describes—nothing else:
-- Do not mix concepts from other sections
-- The image is a direct visual translation of this section only
+Each image must depict EXACTLY what the content directly above it describes—nothing else:
+- The image appears right next to its section; it must be a direct visual translation of that section only
+- Do not mix concepts from other sections or add generic imagery
+- When the content is about a product being used by a person: the image MUST be a selfie of that person holding the product, with a genuine smile—as if they took the photo themselves
 - When section mentions a specific person: match their gender and show them (as selfie when testimonial/experience)
+- Never create images that don't represent the content around them
 
 # Universal Failure Conditions
 
@@ -266,8 +268,9 @@ Use motion/animation when the content requires it for credibility and comprehens
 /**
  * Compact style directives to append to image model prompts.
  * The image model receives a single prompt string; these enforce the guideline's visual tone.
+ * Goal: a normal person would not know the image is AI-generated.
  */
-export const IMAGE_MODEL_STYLE_DIRECTIVE = `Style: Ultra-photorealistic, 8K quality, indistinguishable from real photography. Hyperrealistic skin texture, natural pores, authentic lighting and shadows. Editorial, candid, observational—like a documentary still. Natural lighting, real environments, lifelike materials. Must look like a real photograph—never CGI, illustration, or AI-art. No text, logos, badges, or promotional elements. Calm, educational, trustworthy tone. Must NOT look like advertising, stock photography, or AI-generated.`;
+export const IMAGE_MODEL_STYLE_DIRECTIVE = `Style: Ultra-photorealistic, 8K quality—indistinguishable from a real photograph. A normal viewer must not be able to tell this is AI-generated. Hyperrealistic skin with natural pores, subtle imperfections, and authentic lighting and shadows. Real-world lighting (window light, soft shadows, no studio glare). Editorial, candid, observational—like a documentary or smartphone photo. Real environments and lifelike materials. No CGI look, no illustration style, no plastic skin, no uncanny symmetry. No text, logos, badges, or promotional elements. Must look like a real photograph taken by a human—never advertising, stock photography, or obviously AI-generated.`;
 
 /**
  * Animation style for video/GIF generation, per the image guideline.

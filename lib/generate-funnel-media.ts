@@ -16,8 +16,8 @@ export interface GenerateFunnelMediaOptions {
   sectionId?: string;
   /** Called when video generation was attempted but failed (we fall back to image). */
   onVideoFallback?: (sectionId: string, err: unknown) => void;
-  /** Optional product reference image (base64) for product sections. Applied only for static images, not GIF/video. */
-  productImageBase64?: string;
+  /** Optional product reference images (base64) for product sections. Applied only for static images, not GIF/video. */
+  productImageBase64?: string[];
   /** Scene type for product sections—adds targeted style hints (before_after, doctor_recommendation, etc.). */
   sceneType?: string;
 }
@@ -44,12 +44,12 @@ export async function generateFunnelMedia(
 
   // Product reference only for static images (video/GIF models may not support it)
   const useProductReference =
-    Boolean(productImageBase64) && !preferGif;
+    Boolean(productImageBase64 && productImageBase64.length > 0) && !preferGif;
 
   if (preferGif && videoModel) {
     try {
       const gifGuideline = getGifGenerationGuideline();
-      const videoPrompt = `${imagePrompt} ${ANIMATION_STYLE_DIRECTIVE}\n\nUltra-photorealistic animation—must look like real documentary footage, 8K quality, indistinguishable from real video. No CGI or artificial look. GIF rules (follow precisely):\n${gifGuideline.slice(0, 3000)}`;
+      const videoPrompt = `${imagePrompt} ${ANIMATION_STYLE_DIRECTIVE}\n\nUltra-photorealistic animation—must look like real documentary or smartphone video. A normal person would not know it is AI-generated. 8K quality, natural motion, real-world lighting. No CGI, no artificial look, no plastic or uncanny feel. GIF rules (follow precisely):\n${gifGuideline.slice(0, 3000)}`;
       const videoResult = await experimental_generateVideo({
         model: videoModel,
         prompt: videoPrompt,
@@ -71,17 +71,22 @@ export async function generateFunnelMedia(
   }
 
   let imageResult;
-  if (useProductReference && productImageBase64) {
+  if (useProductReference && productImageBase64 && productImageBase64.length > 0) {
     try {
+      const refs = productImageBase64.slice(0, 3);
+      const referenceParts = refs.map((b64) => ({ type: "image" as const, image: b64 }));
+      const conditioningText = `${imagePrompt}
+
+CRITICAL PRODUCT MATCHING: The user uploaded a reference product image. The product shown in the generated image MUST match the reference product EXACTLY: same packaging shape, label layout, colors, branding marks, cap/nozzle type, proportions, and material finish. Do NOT create a lookalike or alternate packaging. Do NOT change the label. Keep the product identical even when held in a person's hand or in a selfie.`;
+
       imageResult = await generateImage({
         model: imageModel,
+        // Multimodal prompt: provide the reference product image(s) plus text instructions.
+        // Some SDK typings may not expose this yet; runtime supports it.
         prompt: [
-          { type: "image" as const, image: productImageBase64 },
-          {
-            type: "text" as const,
-            text: `${imagePrompt}\n\nIncorporate the product from the reference image into this scene. Match the product's appearance exactly.`,
-          },
-        ] as unknown as string,
+          ...referenceParts,
+          { type: "text" as const, text: conditioningText },
+        ] as unknown as any,
         aspectRatio: "16:9",
       });
     } catch (err) {

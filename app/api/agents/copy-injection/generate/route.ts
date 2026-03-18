@@ -307,7 +307,7 @@ Create enough sections so all ${paragraphs.length} paragraphs are assigned. Foll
 
   const defaultProductGuidelines =
     productImageBase64.length > 0
-      ? "CRITICAL: (1) Testimonials and ANY section showing a person with the product: MUST be a SELFIE—person taking the photo themselves, first-person POV, holding or using the product. Match their gender exactly. (2) Product intro/mechanism (no person): product clearly visible in frame. (3) Doctor/expert: show them holding or recommending the product."
+      ? "CRITICAL: (1) Testimonials and ANY section showing a person with the product: MUST be a SELFIE—person taking the photo themselves, first-person POV, holding the product with a genuine smile. Match their gender exactly. (2) Images must depict ONLY the content above them—no generic or unrelated imagery. (3) Product intro/mechanism (no person): product clearly visible in frame. (4) Doctor/expert: show them holding or recommending the product. (5) Ultra-photorealistic—indistinguishable from real photography."
       : "";
 
   const productGuidelinesFinal =
@@ -403,12 +403,12 @@ IDs in order of appearance: ${placeholderIdList}
 
   const templateReplicationBlock = hasTemplate
     ? `
-**TEMPLATE REPLICATION (MANDATORY):**
-1. STRUCTURE: Copy the template's HTML structure EXACTLY—same element hierarchy, nesting, and class names.
-2. CLASS NAMES: Use the template's exact class names. Do NOT invent new class names. Extract them from the template scaffold below.
-3. WHEN ADDING SECTIONS: If the section plan has MORE sections than the template shows (e.g. more body sections, more testimonials), DUPLICATE the template's pattern. For each extra body section: use the same <section class="..."> structure, same inner elements (h2, p, etc.), same class names—only change the text content. One body section in template = pattern for all body sections. Same for testimonials, FAQs, etc.
-4. WHEN FEWER SECTIONS: Omit sections but preserve the structure of those you include. Match the template's styling of remaining sections.
-5. LAYOUT: The generated funnel must be visually indistinguishable from the template—only the copy content differs.
+**TEMPLATE REPLICATION (MANDATORY—output must look identical to the template):**
+1. STRUCTURE: Copy the template's HTML structure EXACTLY—same element hierarchy, nesting, and class names. Do NOT invent new tags or wrappers.
+2. CLASS NAMES: Use ONLY the template's exact class names. Extract every class from the template scaffold below and reuse them verbatim. No new class names (e.g. if template has "hero", "body", "cta-section", use those—do not add "section-hero" or "content-block").
+3. WHEN ADDING SECTIONS: If the section plan has MORE sections than the template shows, DUPLICATE the template's pattern. Same <section class="...">, same inner elements (h1/h2, p, etc.), same classes—only the text content changes. One body section in template = pattern for all body sections; same for testimonials, FAQs, CTAs.
+4. WHEN FEWER SECTIONS: Omit sections but keep the structure of included sections identical to the template.
+5. VISUAL FIDELITY: The generated funnel must be visually indistinguishable from the template—same layout, spacing, typography hierarchy. Only the copy/content differs. The template defines the look; your output must replicate it exactly.
 `
     : "";
 
@@ -423,14 +423,16 @@ ${testimonialImageBlock}
 ${ctaImageBlock}
 **EXACT COPY - NOTHING ADDED OR REMOVED:** Output the section plan content EXACTLY as provided. Do not add, omit, or rephrase a single line. Every paragraph, review, and disclaimer from the plan must appear verbatim in the HTML. **CRITICAL:** Preserve any <img src="{{image:SECTION_ID}}" ... /> tags that appear in section content—they must appear in your output unchanged.
 
-**CONTENT FORMATTING (CRITICAL):** Apply proper HTML styling by analyzing the copy structure. Preserve spacing, emphasis, and structure from the section plan:
+**CONTENT FORMATTING (CRITICAL):** Preserve ALL formatting from the section plan. Content may already contain HTML from pasted copy (e.g. Google Docs); keep it intact:
+- **Preserve existing tags:** Keep every <b>, <i>, <u> from the section plan exactly as provided. Do not strip or rephrase.
 - Paragraph breaks → <br><br> between each paragraph
 - Line breaks → <br> for breathing room within paragraphs
-- Bold key phrases → <b>text</b> for emphasis (preserve or add where content has **text** or strong emphasis)
-- Italics → <i>text</i> for quotes and subtle emphasis (preserve or add where content has *text* or italics)
-- **Lists:** Bullet points → <ul class="content-list"><li>item</li></ul>; numbered items → <ol class="content-list"><li>item</li></ol>
-- **Blockquotes:** Standalone or dramatic quotes → <blockquote class="content-quote">...</blockquote>
-- Do not paste raw unformatted text—no wall-of-text. Apply semantic markup based on content structure.
+- Bold → <b>text</b> (preserve existing <b> or add where emphasis is intended)
+- Italics → <i>text</i> (preserve existing <i>)
+- Underline → <u>text</u> (preserve existing <u>)
+- **Lists:** Bullet points → <ul class="content-list"><li>item</li></ul>; numbered → <ol class="content-list"><li>item</li></ol>
+- **Blockquotes:** Standalone quotes → <blockquote class="content-quote">...</blockquote>
+- Do not paste raw unformatted text—no wall-of-text. Preserve spacing and structure from the plan.
 **COMPLETE OUTPUT:** You MUST output the FULL HTML with EVERY section from the plan. Never truncate, abbreviate, or skip sections—no matter how long. Use semantic HTML. No markdown fences.
 
 ADAPTIVE LAYOUT:
@@ -503,7 +505,7 @@ ${templateHtmlScaffold}
         imageModel,
         videoModel,
         sectionId: section.id,
-        productImageBase64: useProductImage ? productImageBase64[0] : undefined,
+        productImageBase64: useProductImage ? productImageBase64 : undefined,
         onVideoFallback: (sid, err) => {
           const msg = err instanceof Error ? err.message : String(err);
           emit({
@@ -591,7 +593,9 @@ ${batchImageSlotsNote}
 ${placeholderBlock}
 ${batchTestimonialBlock}
 ${batchCtaBlock}
-**EXACT COPY:** Output the section content EXACTLY as provided. Preserve any <img src="{{image:SECTION_ID}}" ... /> tags in the content unchanged. No truncation, no omission.
+**EXACT COPY:** Output the section content EXACTLY as provided. Preserve any <img src="{{image:SECTION_ID}}" ... /> tags and all <b>, <i>, <u> formatting in the content unchanged. No truncation, no omission.
+
+**TEMPLATE:** Use the template's exact class names and structure. Replicate the template's look exactly.
 
 Template HTML scaffold (structure to replicate exactly):
 \`\`\`html
@@ -703,13 +707,15 @@ ${html}
   const cssPrompt = hasTemplateCss
     ? `${copyContext}
 
-You are an expert CSS author. The template CSS is provided below and will be used AS-IS as the base. Your job: output ONLY additional rules for classes that appear in the HTML but are NOT styled in the template.
+You are an expert CSS author. The template CSS below is the SOURCE OF TRUTH for style. Your job: output ONLY additional rules for classes that appear in the HTML but are NOT already styled in the template.
 
-**YOUR OUTPUT = DELTA ONLY:** Output ONLY CSS rules for selectors not already in the template. Use the SAME design tokens from the template (colors, fonts, spacing). If every class in the HTML is already covered by the template, output a single comment: /* All classes styled by template */
+**TEMPLATE STYLE REPLICATION:** The funnel must look exactly like the selected template. Do NOT override template rules. Do NOT change colors, fonts, or spacing that the template already defines. Extract the template's design tokens (e.g. --color-primary, font-family, padding, border-radius) and reuse them in any new rules.
+
+**YOUR OUTPUT = DELTA ONLY:** Output ONLY CSS for selectors that are missing from the template. If every class in the HTML is already covered by the template, output a single comment: /* All classes styled by template */
 ${contentStructureNote}
 **Classes in HTML:** ${classList || "(none found)"}
 
-**Template CSS (already applied—do not repeat):**
+**Template CSS (already applied—replicate its style for any new classes):**
 \`\`\`css
 ${templateCssBase}
 \`\`\`

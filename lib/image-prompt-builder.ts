@@ -29,7 +29,7 @@ const visualDescriptionSchema = z.object({
     .min(20)
     .max(500)
     .describe(
-      "Ultra-photorealistic scene description. Specify: who (people, roles, gender when a person is mentioned), what is happening, setting, lighting, mood. Must match the section content exactly. Describe as if directing a documentary—lifelike, authentic, real photography.",
+      "Ultra-photorealistic scene description that a normal person would not identify as AI-generated. Specify: who (people, roles, gender), what is happening, setting, natural lighting, mood. Must match ONLY the content of this section—the image appears directly above this content. Describe as real documentary or smartphone photography: lifelike skin, natural imperfections, authentic expressions. For person+product: selfie POV, person holding product, genuine smile.",
     ),
   /** For product sections: scene type to apply targeted style hints. Use null when not a product section. */
   sceneType: sceneTypeSchema.nullable(),
@@ -40,17 +40,17 @@ const visualDescriptionSchema = z.object({
     .describe(
       "If content mentions a specific person by name or pronouns (she/he, her/him), set woman or man. Use unspecified only when no person or gender cannot be determined.",
     ),
-  /** When content describes a person's result, experience, or testimonial with the product—image must be selfie-style. ALWAYS true for testimonials. True when section discusses the product that shows a person. */
+  /** When content describes a person's result, experience, or testimonial with the product—image must be selfie-style with smile. ALWAYS true for testimonials. */
   requiresSelfie: z
     .boolean()
     .describe(
-      "ALWAYS true for testimonial sections. True when section discusses the product AND shows a person (customer, reviewer, someone's result/experience). Image MUST be a selfie of that person holding or using the product.",
+      "ALWAYS true for testimonial sections. True when section discusses the product AND shows a person. Image MUST be a selfie of that person holding or using the product, with a genuine smile—as if they took the photo themselves.",
     ),
-  /** Image type: product_only = product shot (no person), selfie = person holding/using product, section_image = general section illustration */
+  /** Image type: product_only = product shot (no person), selfie = person holding/using product with smile, section_image = general section illustration */
   imageType: z
     .enum(["product_only", "selfie", "section_image"])
     .describe(
-      "product_only: content discusses ONLY the product (mechanism, benefits)—show product clearly, no person. selfie: content mentions a person's experience/testimonial with product—show that person in selfie with product. section_image: general section—illustrate the concept, mechanism, or scene from the content.",
+      "product_only: content discusses ONLY the product (mechanism, benefits)—show product clearly, no person. selfie: content mentions a person with product—show that person in selfie holding product with a smile. section_image: illustrate ONLY the concept/scene from this section's content.",
     ),
 });
 
@@ -82,7 +82,7 @@ const SCENE_TYPE_HINTS: Record<string, string> = {
   before_after: "Split or side-by-side composition, transformation reveal, realistic before/after, authentic results.",
   doctor_recommendation: "Doctor or expert in clinical/lab setting holding the product, professional but approachable, recommending or demonstrating it. Show the doctor clearly holding the product.",
   testimonial_with_product:
-    "SELFIE-STYLE (exactly like real customer photo): Person taking the photo themselves, arm extended, first-person POV. Person smiling warmly at camera, holding the product prominently with both hands—product label clearly visible facing camera. Indoor home setting (kitchen, living room, cozy background). Natural window light, candid, not staged. MUST match the testimonial subject's gender (woman or man from content). Authentic testimonial selfie—older adult, relaxed, satisfied.",
+    "SELFIE-STYLE (indistinguishable from real customer photo): Person taking the photo themselves, arm extended, first-person POV. Person must have a genuine smile—warm, natural, not forced. Holding the product prominently with both hands, product label clearly visible facing camera. Indoor home setting (kitchen, living room). Natural window light, candid. MUST match the testimonial subject's gender from content. Ultra-photorealistic; a normal person would not know it is AI-generated.",
   product_mechanism: "Product clearly visible. Clear visual of how product works, mechanism in action, educational and precise. Show the product in use or demonstrating its mechanism.",
   product_intro: "Product clearly visible in frame, editorial presentation, not staged advertising. Product is the focal point.",
   transformation:
@@ -122,7 +122,7 @@ export async function buildVisualDescription(
     body: "BODY IMAGE: Visually explain this section's single core idea. One idea = one image. Must simplify and clarify what the reader just read. If content mentions a person's result/experience with a product: SELFIE of that person holding/using it. Match person's gender (woman/man) from content. Explain, don't decorate.",
     cta: "CTA IMAGE: Show the outcome or transformation the CTA promises. Subtle, editorial. No ad-like elements.",
     testimonial:
-      "TESTIMONIAL IMAGE (MANDATORY SELFIE—like real customer review photo): Person taking the photo themselves, arm extended, first-person POV. Smiling warmly at camera, holding product prominently with both hands—product label visible. Indoor home setting (kitchen, living room). Natural light, candid. MUST match reviewer's gender (Sarah/Lisa=woman, John/Mike=man). Older adult, relaxed, authentic testimonial feel.",
+      "TESTIMONIAL IMAGE (MANDATORY SELFIE—like real customer review photo): Person taking the photo themselves, first-person POV. Must show a genuine smile—warm, natural. Holding product prominently with both hands, product label visible. Indoor home setting (kitchen, living room). Natural light, candid. MUST match reviewer's gender from content. Ultra-photorealistic so a normal person would not know it is AI-generated.",
     proof: "PROOF IMAGE: Show evidence—study scene, mechanism, or result. Educational, clinical-but-human.",
     image: "IMAGE SECTION: Illustrate the key concept of this section. If about a person's experience: selfie of them with the product. Match gender. Direct visual support for the copy.",
     faq: "FAQ IMAGE: Show the situation or question the FAQ addresses. Clear, low clutter.",
@@ -161,20 +161,21 @@ UNIQUENESS (CRITICAL): This image is for section "${section.id ?? "this section"
       ? `\n\nPRODUCT-SPECIFIC GUIDELINES (follow these for this product):\n${funnelContext.productGuidelines.trim().slice(0, 1500)}`
       : "";
 
-  const contentAwarePrompt = `You are creating a HYPERREALISTIC image for ONE specific section. The content below is the ONLY source for your description—use it to generate a unique, section-specific prompt.
+  const contentAwarePrompt = `You are creating a HYPERREALISTIC image for ONE specific section. The image will appear directly above the content below—it MUST represent only that content. A normal person should not be able to tell the image is AI-generated.
 
-**CONTENT-ONLY RULE:** Your output must derive EXCLUSIVELY from the content below. This image will appear right next to this content. Analyze and determine:
-- WHO is in the scene (doctor, patient, happy customer, researcher, etc.)
-- WHAT is happening (before/after reveal, recommendation, holding product, transformation, mechanism)
-- WHERE it takes place (lab, clinic, home, office)
-- TONE (clinical, hopeful, testimonial, educational)
+**CONTENT-ONLY RULE:** Your output must derive EXCLUSIVELY from the content below. Do NOT create images that don't represent the content around them. Analyze:
+- WHO is in the scene (doctor, customer, reviewer, etc.) and their gender
+- WHAT is happening (before/after, recommendation, person holding product, mechanism)
+- WHERE it takes place (lab, home, office)
+- TONE (testimonial, educational, hopeful)
 
 CRITICAL RULES (MANDATORY):
-1. GENDER MATCHING: If the content mentions a woman (by name like Sarah, Lisa, or pronouns she/her), the image MUST show a woman. If it mentions a man (John, Mike, he/him), show a man. Set personGender accordingly. Your description MUST explicitly state "a woman" or "a man" when a person is depicted.
-2. SELFIE FOR TESTIMONIALS & PRODUCT+PERSON (MANDATORY): Testimonial sections ALWAYS require requiresSelfie: true. Any section that discusses the product AND shows a person (reviewer, customer, someone's result/experience) ALSO requires requiresSelfie: true. The image MUST be a selfie—first-person POV, person holding or using the product, as if they took the photo themselves. Candid, authentic, not a professional shoot. Person and product visible in frame.
-3. EXACT CONTENT MATCH: The image must depict EXACTLY and ONLY what this section describes. Do not mix concepts from other sections. Direct visual translation of this section's content only.
-4. UNIQUENESS: This image must be visually distinct from other funnel images. Unique composition, different person/scene/setting. No generic or repetitive descriptions.
-5. PRODUCT VISIBILITY: When the section discusses the product (mechanism, benefits, how it works), ensure the product is clearly visible. For product-intro: product in frame as focal point. For mechanism: show how it works.
+1. IMAGE MUST MATCH CONTENT ABOVE: The image depicts ONLY what this section describes. Never generic or unrelated imagery. Direct visual translation of this section only.
+2. GENDER MATCHING: If content mentions a woman (Sarah, Lisa, she/her), image MUST show a woman. If a man (John, Mike, he/him), show a man. State "a woman" or "a man" in the description when a person is depicted.
+3. SELFIE + SMILE FOR PRODUCT+PERSON: Testimonials and any section where a person uses or recommends the product MUST be selfie-style: first-person POV, person holding the product, with a genuine smile—as if they took the photo themselves. requiresSelfie: true. Person and product visible; candid, not staged.
+4. REALISM: Describe so the result looks like a real photograph—natural skin, natural lighting, real environment. No CGI look, no plastic skin, no uncanny symmetry. Indistinguishable from real photography.
+5. UNIQUENESS: This image must be visually distinct from other funnel images. Unique composition, different person/scene/setting.
+6. PRODUCT VISIBILITY: When the section discusses the product, ensure the product is clearly visible. For person+product: selfie with product in hand and smile.
 
 Section type: ${section.type ?? "body"}
 Section title: ${section.title}
@@ -184,12 +185,12 @@ ${funnelContextBlock}
 ${uniquenessBlock}
 ${productGuidelinesBlock}
 
-${section.preferGif ? "This will be ANIMATED (GIF/video). Describe a moment of transition, process in progress, or cause-effect in motion." : ""}
-${section.isProductSection ? "This section discusses the product. Describe the scene so the product is clearly incorporated—show it in context. If a product reference image is provided, match that product exactly. When showing people with the product, include the product visibly in their hands or in use." : ""}
+${section.preferGif ? "This will be ANIMATED (GIF/video). Describe a moment of transition or process—ultra-photorealistic, like real footage." : ""}
+${section.isProductSection ? "This section discusses the product. When a person is shown with the product: selfie, person holding product, genuine smile. Match product from reference if provided." : ""}
 
-**IMAGE TYPE (set imageType):** From the content, determine: (a) product_only—content discusses ONLY the product, no person mentioned → show product clearly; (b) selfie—content mentions a person's experience, testimonial, or result with product → selfie of that person with product; (c) section_image—general mechanism, concept, or scene → illustrate that specific idea.
+**IMAGE TYPE (set imageType):** (a) product_only—content discusses ONLY the product, no person → show product clearly; (b) selfie—person's experience/testimonial with product → selfie of that person holding product with a smile; (c) section_image—illustrate this section's concept only.
 
-Task: Write a concrete scene description (2-3 sentences) derived ONLY from the content below. Specify people (and gender), setting, lighting, mood. Ultra-photorealistic.
+Task: Write a concrete scene description (2-3 sentences) from the content only. Specify people and gender, setting, natural lighting. Ultra-photorealistic—indistinguishable from real photography.
 sceneType: ${section.isProductSection ? "Choose: before_after, doctor_recommendation, testimonial_with_product, product_mechanism, product_intro, transformation, other." : "Use null."}
 imageType: Set based on content analysis above.`;
 
@@ -222,7 +223,10 @@ imageType: Set based on content analysis above.`;
         result.object.sceneType ?? "",
       ));
   if (forceSelfie && !/selfie|first-person|holding the product|using the product/i.test(description)) {
-    description = `Selfie-style photo, first-person POV, person holding or using the product. ${description}`;
+    description = `Selfie-style photo, first-person POV, person holding or using the product with a genuine smile. ${description}`;
+  }
+  if (forceSelfie && !/smile|smiling|grin/i.test(description)) {
+    description = description.replace(/\.\s*$/, ". Person smiling warmly at camera.");
   }
   if (imageType === "product_only" && !/product|product's|the product/i.test(description)) {
     description = `Product clearly visible in frame, focal point. ${description}`;
