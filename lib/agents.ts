@@ -26,8 +26,8 @@ export const AGENTS: AgentCard[] = [
     slug: "new-funnel",
     title: "New Funnel Implementation",
     description:
-      "Create new funnel steps and pages from proven frameworks and predefined structure rules.",
-    status: "coming-soon",
+      "CRO Agent: optimize copy with customer research, replicate proven funnel structures, and apply conversion patterns to improve funnel performance.",
+    status: "live",
   },
   {
     slug: "copy-chief",
