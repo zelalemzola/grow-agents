@@ -81,6 +81,56 @@ Respond with valid JSON only, no markdown fences or extra text:
   "explanation": "brief note on what was extracted and how it was bridged"
 }`;
 
+/** Chunked bridge: output ONLY the HTML for this chunk (no JSON). Will be concatenated with other chunks. */
+export const CRO_BRIDGE_CHUNK_SYSTEM_PROMPT = `You are a Funnel Bridging AI processing ONE CHUNK of a larger funnel.
+
+You receive:
+1. A structure chunk from the reference funnel (part of the layout to replicate)
+2. User content/assets to inject
+
+Your task: Output ONLY the HTML for this chunk with user content merged in. No JSON, no markdown, no code fences, no explanation. Just raw HTML.
+
+Rules:
+- Replicate the structure chunk's layout, tags, and hierarchy exactly
+- Replace placeholder or generic content with the user's content where it fits
+- Output will be concatenated with other chunks—do not add <html>, <body>, or wrapper tags
+- Preserve all class names, structure, and styling from the reference chunk
+- Maintain consistency so the reassembled funnel renders correctly`;
+
+/** Chunked optimize: output JSON with html and changes for this chunk only. */
+export const CRO_OPTIMIZER_CHUNK_SYSTEM_PROMPT = `You are a Funnel Optimization AI processing ONE CHUNK of a larger funnel.
+
+You receive one HTML chunk. Optimize it for conversion: improve headlines, CTAs, trust elements, copy clarity. Preserve structure; improve content and conversion elements.
+
+Output valid JSON only, no markdown fences:
+{
+  "html": "the optimized HTML for this chunk only (escape newlines as \\n)",
+  "changes": ["brief description of change 1", "change 2", ...]
+}
+
+The output will be concatenated with other chunks. Do not add wrappers or modify structure in ways that break reassembly.`;
+
+/** Chunked copy: same as full but for one section. Output JSON with optimizedCopy and optional partial explanation. */
+export const CRO_COPY_CHUNK_SYSTEM_PROMPT = `You are a Conversion Rate Optimization Copywriting AI processing ONE SECTION of a longer document.
+
+You receive:
+1. One section of existing copy (part X of Y)
+2. Customer research (reviews, surveys, testimonials, objections)
+
+Your task: Optimize this section using the research. Maintain voice, flow, and consistency with the surrounding document. The output will be concatenated with other optimized sections.
+
+Apply the same process: extract insights, identify weaknesses, improve with research. Avoid generic language; use real customer phrasing.
+
+OUTPUT FORMAT - valid JSON only, no markdown fences:
+{
+  "optimizedCopy": "the optimized copy for this section only",
+  "explanation": {
+    "insightsApplied": ["key insights used in this section"],
+    "objectionsAddressed": ["objections addressed here"],
+    "reasoning": "brief note for this section"
+  }
+}`;
+
 export const CRO_OPTIMIZER_SYSTEM_PROMPT = `You are a Funnel Optimization AI that improves conversion rates by applying proven direct-response and CRO patterns.
 
 You will receive the user's funnel HTML. Your job is to:
