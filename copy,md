@@ -1,0 +1,637 @@
+AI Copy Agent — Product Brief
+Objective
+Build an AI Copywriting Agent specialized in Direct-Response Conversion Copy.
+The agent will generate high-converting marketing copy by combining:
+Customer research
+
+
+Product information
+
+
+Direct-response frameworks
+
+
+Large databases of proven examples
+
+
+Page-type specific system prompts
+
+
+The system must generate copy that is extremely relevant, persuasive, and conversion-focused.
+The model used for copy reasoning must be:
+Claude Opus (latest version)
+This model will be responsible for all copy generation and research synthesis.
+
+Core Concept
+The AI Copy Agent works by combining three data sources:
+1. Customer Research
+Used to make copy feel real, emotional, and relevant.
+Examples:
+reviews
+
+
+testimonials
+
+
+support tickets
+
+
+survey answers
+
+
+forum posts
+
+
+interviews
+
+
+objections
+
+
+
+2. Product Information
+Used to build the problem → mechanism → solution narrative.
+Examples:
+product description
+
+
+ingredients/components
+
+
+mechanism explanation
+
+
+benefits
+
+
+proof
+
+
+testimonials
+
+
+
+3. Direct-Response Knowledge Database
+The AI is trained on a database containing:
+proven advertorials
+
+
+winning offer pages
+
+
+upsell pages
+
+
+listicles
+
+
+conversion frameworks
+
+
+copywriting books
+
+
+persuasion guides
+
+
+CRO frameworks
+
+
+This database provides patterns, structures, and persuasion techniques.
+
+Copy Generation Workflow
+The AI agent follows this process:
+Step 1 — Understand Customer Psychology
+Extract from research:
+core pain points
+
+
+emotional frustrations
+
+
+fears
+
+
+desired outcomes
+
+
+objections
+
+
+language customers use
+
+
+
+Step 2 — Understand the Product
+Analyze:
+what problem it solves
+
+
+how it works
+
+
+unique mechanism
+
+
+key benefits
+
+
+credibility
+
+
+
+Step 3 — Select Copy Type
+The user selects the type of copy to generate.
+Each type has:
+its own system prompt
+
+
+its own guidelines
+
+
+its own example database
+
+
+
+Step 4 — Generate Copy
+The AI combines:
+research insights
+
+
+product knowledge
+
+
+persuasion frameworks
+
+
+proven examples
+
+
+To generate structured, high-converting copy.
+
+Copy Types (Main Copy Modules)
+The system should support multiple copy types.
+Each copy type will have its own prompt and knowledge base.
+
+1 — Advertorial Copy
+Purpose:
+Warm up traffic and introduce the problem.
+Focus:
+curiosity
+
+
+storytelling
+
+
+emotional connection
+
+
+education
+
+
+mechanism discovery
+
+
+Structure examples:
+problem discovery
+
+
+expert authority
+
+
+mechanism explanation
+
+
+discovery narrative
+
+
+transition to solution
+
+
+Database examples:
+proven advertorial funnels
+
+
+native ad funnels
+
+
+health advertorials
+
+
+editorial-style pages
+
+
+
+2 — Offer Page Copy
+Purpose:
+Convert readers into buyers.
+Focus:
+benefits
+
+
+proof
+
+
+mechanism clarity
+
+
+objections
+
+
+urgency
+
+
+Structure examples:
+headline
+
+
+hero section
+
+
+problem agitation
+
+
+mechanism explanation
+
+
+product introduction
+
+
+proof
+
+
+testimonials
+
+
+guarantees
+
+
+CTA blocks
+
+
+Database examples:
+direct response sales pages
+
+
+product funnels
+
+
+long-form sales pages
+
+
+
+3 — Upsell Page Copy
+Purpose:
+Increase average order value.
+Focus:
+quick persuasion
+
+
+simplicity
+
+
+strong offer framing
+
+
+Structure examples:
+reminder of previous purchase
+
+
+introduction of additional benefit
+
+
+urgency
+
+
+fast decision CTA
+
+
+Database examples:
+ecommerce upsells
+
+
+funnel upsells
+
+
+order bump pages
+
+
+
+4 — Listicle Copy
+Purpose:
+Generate curiosity and engagement.
+Focus:
+curiosity
+
+
+discovery
+
+
+comparison
+
+
+Structure examples:
+headline
+
+
+numbered list
+
+
+product explanations
+
+
+comparison sections
+
+
+recommendation
+
+
+Database examples:
+native ad listicles
+
+
+comparison articles
+
+
+product ranking articles
+
+
+
+5 — Thank You Page Copy
+Purpose:
+Strengthen trust and increase engagement.
+Focus:
+reassurance
+
+
+onboarding
+
+
+next steps
+
+
+cross-sell opportunities
+
+
+Structure examples:
+confirmation
+
+
+expectation setting
+
+
+product usage instructions
+
+
+support access
+
+
+cross-sell
+
+
+
+Prompt System Architecture
+The AI should operate using layered prompts.
+
+Layer 1 — Global System Prompt
+Defines the AI's role:
+Example:
+Direct Response Copywriter + CRO Specialist
+Responsibilities:
+conversion optimization
+
+
+persuasion frameworks
+
+
+customer psychology
+
+
+
+Layer 2 — Page Type Prompt
+Each copy type has its own system prompt.
+Examples:
+Advertorial prompt
+ Offer page prompt
+ Upsell prompt
+ Listicle prompt
+ Thank you page prompt
+These prompts define:
+tone
+
+
+structure
+
+
+persuasion strategy
+
+
+narrative flow
+
+
+
+Layer 3 — Guidelines
+Each page type also has writing rules.
+Example guidelines:
+Advertorial:
+editorial tone
+
+
+curiosity gaps
+
+
+discovery narrative
+
+
+Offer page:
+clarity
+
+
+strong benefits
+
+
+proof stacking
+
+
+Upsell:
+fast persuasion
+
+
+minimal friction
+
+
+
+Layer 4 — Example Database
+Each page type has a library of examples.
+Examples include:
+high-performing funnels
+
+
+winning sales pages
+
+
+advertorial case studies
+
+
+The AI references these examples to understand:
+structure
+
+
+persuasion patterns
+
+
+messaging style
+
+
+
+Input Interface
+The user will input:
+Customer Research
+Examples:
+reviews
+
+
+testimonials
+
+
+objections
+
+
+survey answers
+
+
+
+Product Information
+Examples:
+product description
+
+
+ingredients
+
+
+benefits
+
+
+mechanism explanation
+
+
+
+Copy Type Selector
+User selects:
+Advertorial
+
+
+Offer Page
+
+
+Upsell
+
+
+Listicle
+
+
+Thank You Page
+
+
+
+Output
+The AI should generate:
+1 — Fully Structured Copy
+Example sections:
+headlines
+
+
+body sections
+
+
+CTAs
+
+
+testimonials
+
+
+proof blocks
+
+
+
+2 — Research Integration Report
+Explain:
+which customer insights were used
+
+
+which objections were addressed
+
+
+why messaging resonates with the audience
+
+
+
+Advanced Features (Future)
+Possible upgrades:
+Copy Variation Generator
+Automatically generate:
+multiple headlines
+
+
+multiple hooks
+
+
+multiple CTAs
+
+
+
+Objection Detector
+AI scans research to detect:
+hidden objections
+
+
+skepticism
+
+
+hesitation triggers
+
+
+
+Emotional Language Mapping
+The system highlights:
+phrases customers actually use
+
+
+emotional triggers
+
+
+These phrases are injected directly into the copy.
+
+System Architecture Summary
+The AI Copy Agent includes:
+1 — Research Analyzer
+Extracts insights from customer research.
+
+2 — Product Intelligence Module
+Understands product mechanism and benefits.
+
+3 — Prompt Engine
+Selects the correct prompt based on copy type.
+
+4 — Example Library
+Provides proven structures and persuasion patterns.
+
+5 — Copy Generator
+Produces structured conversion copy.
+
+Core Goal
+Create an AI copywriting engine capable of producing direct-response copy that feels written by an expert copywriter with deep customer insight.
+The output should consistently feel:
+specific
+
+
+believable
+
+
+emotionally relevant
+
+
+highly persuasive
+
+
+

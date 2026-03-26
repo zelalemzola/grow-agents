@@ -19,8 +19,8 @@ export const AGENTS: AgentCard[] = [
     slug: "policy-changes",
     title: "Policy Change Adapter",
     description:
-      "Detect risky claims and rewrite only non-compliant copy while preserving conversion flow.",
-    status: "coming-soon",
+      "Scan full HTML, update only policy-violating copy, and return compliant HTML with a detailed change log.",
+    status: "live",
   },
   {
     slug: "new-funnel",
@@ -34,7 +34,7 @@ export const AGENTS: AgentCard[] = [
     title: "Copy Chief",
     description:
       "Generate brand-aligned high-conversion copy variants under strict style and compliance constraints.",
-    status: "coming-soon",
+    status: "live",
   },
   {
     slug: "ad-image-generation",

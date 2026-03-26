@@ -377,7 +377,8 @@ export async function POST(request: Request) {
   const input = parsed.data;
   const supabase = await createServerSupabaseClient();
   const gateway = getGateway();
-  const model = gateway("openai/gpt-4.1");
+  // CRO PDF: "Claude Opus (latest)" required for reasoning across research, UI structure, funnel optimization
+  const model = gateway("anthropic/claude-opus-4.6");
 
   try {
     if (input.mode === "copy") {
