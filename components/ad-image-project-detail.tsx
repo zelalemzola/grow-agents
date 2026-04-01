@@ -8,6 +8,7 @@ import {
   RefreshCw,
   ImageIcon,
   Undo2,
+  Redo2,
   ChevronDown,
   Download,
   X,
@@ -38,6 +39,9 @@ export function AdImageProjectDetail({ projectId }: { projectId: string }) {
   const [previousImageByIndex, setPreviousImageByIndex] = useState<
     Record<number, string>
   >({});
+  const [redoImageByIndex, setRedoImageByIndex] = useState<Record<number, string>>(
+    {},
+  );
   const [lightbox, setLightbox] = useState<{ src: string; index: number } | null>(
     null,
   );
@@ -73,6 +77,11 @@ export function AdImageProjectDetail({ projectId }: { projectId: string }) {
     const prevUrl = project.latest_images?.[String(selectedIndex)];
     if (prevUrl) {
       setPreviousImageByIndex((p) => ({ ...p, [selectedIndex]: prevUrl }));
+      setRedoImageByIndex((p) => {
+        const next = { ...p };
+        delete next[selectedIndex];
+        return next;
+      });
     }
     setRegeneratingIndex(selectedIndex);
     setStatus(`Regenerating image ${selectedIndex}…`);
@@ -133,6 +142,8 @@ export function AdImageProjectDetail({ projectId }: { projectId: string }) {
   const handleUndo = async (index: number) => {
     const prevUrl = previousImageByIndex[index];
     if (!prevUrl || !project) return;
+    const currentUrl = project.latest_images?.[String(index)];
+    if (!currentUrl) return;
     setProject((p) =>
       p
         ? {
@@ -146,6 +157,7 @@ export function AdImageProjectDetail({ projectId }: { projectId: string }) {
       delete next[index];
       return next;
     });
+    setRedoImageByIndex((p) => ({ ...p, [index]: currentUrl }));
     setStatus(`Restored image ${index}.`);
     try {
       const res = await fetch(
@@ -162,6 +174,46 @@ export function AdImageProjectDetail({ projectId }: { projectId: string }) {
       }
     } catch {
       setStatus("Undo saved locally.");
+    }
+  };
+
+  const handleRedo = async (index: number) => {
+    const redoUrl = redoImageByIndex[index];
+    if (!redoUrl || !project) return;
+    const currentUrl = project.latest_images?.[String(index)];
+    if (!currentUrl) return;
+
+    setProject((p) =>
+      p
+        ? {
+            ...p,
+            latest_images: { ...p.latest_images, [String(index)]: redoUrl },
+          }
+        : null,
+    );
+    setRedoImageByIndex((p) => {
+      const next = { ...p };
+      delete next[index];
+      return next;
+    });
+    setPreviousImageByIndex((p) => ({ ...p, [index]: currentUrl }));
+    setStatus(`Reapplied image ${index}.`);
+
+    try {
+      const res = await fetch(
+        `/api/agents/ad-image-generation/funnels/${project.id}/image`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ imageIndex: index, imageUrl: redoUrl }),
+        },
+      );
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setStatus(data?.error ?? "Redo save failed.");
+      }
+    } catch {
+      setStatus("Redo saved locally.");
     }
   };
 
@@ -318,6 +370,7 @@ export function AdImageProjectDetail({ projectId }: { projectId: string }) {
             const src = project.latest_images?.[key];
             const isRegenerating = regeneratingIndex === num;
             const hasUndo = Boolean(previousImageByIndex[num]);
+            const hasRedo = Boolean(redoImageByIndex[num]);
 
             return (
               <div
@@ -354,16 +407,31 @@ export function AdImageProjectDetail({ projectId }: { projectId: string }) {
                   <span className="absolute left-2 top-2 rounded bg-black/60 px-2 py-1 text-xs font-medium text-white backdrop-blur-sm">
                     Image {num}
                   </span>
-                  {hasUndo && !isRegenerating && (
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      className="absolute right-2 top-2 gap-1.5 rounded-lg bg-white/90 text-xs shadow-md hover:bg-white dark:bg-zinc-800 dark:hover:bg-zinc-700"
-                      onClick={() => handleUndo(num)}
-                    >
-                      <Undo2 className="size-3.5" />
-                      Undo
-                    </Button>
+                  {!isRegenerating && (
+                    <div className="absolute right-2 top-2 flex gap-2">
+                      {hasRedo && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          className="gap-1.5 rounded-lg bg-white/90 text-xs shadow-md hover:bg-white dark:bg-zinc-800 dark:hover:bg-zinc-700"
+                          onClick={() => handleRedo(num)}
+                        >
+                          <Redo2 className="size-3.5" />
+                          Redo
+                        </Button>
+                      )}
+                      {hasUndo && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          className="gap-1.5 rounded-lg bg-white/90 text-xs shadow-md hover:bg-white dark:bg-zinc-800 dark:hover:bg-zinc-700"
+                          onClick={() => handleUndo(num)}
+                        >
+                          <Undo2 className="size-3.5" />
+                          Undo
+                        </Button>
+                      )}
+                    </div>
                   )}
                 </div>
                 {prompts[num - 1] && (
