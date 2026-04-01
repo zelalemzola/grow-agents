@@ -19,13 +19,21 @@ CRITICAL RULES:
 5. TONE & INTENSITY: Preserve the EXACT meaning and marketing "hype" of the original. Do NOT soften, downplay, or reduce exaggeration. Match superlatives with superlatives. Keep urgency, emotional intensity, and persuasive language intact. Germans respond to strong marketing copy—translate enthusiastically.
 6. DATE FORMAT: When translating TO German, use German date format DD.MM.YYYY (e.g. 1.1.2026, 15.3.2026). Do NOT spell out month names (no "Januar", "1. Januar") or use US formats (MM/DD/YYYY).
 7. PRODUCT & MEDICINE NAMES: Localize product names, brand names, and medicine names into what they are actually called in the target language/country. Use the proper local term (e.g. German product name in Germany, not just German spelling of the English name). Be consistent—use the same localized term throughout the entire document.
-8. OUTPUT: Return ONLY the translated HTML. No explanations, no markdown code fences, no preamble. Raw HTML only.`;
+8. FORMATTING FIDELITY: Preserve paragraph spacing, line breaks, and visible whitespace exactly unless a language-specific punctuation/spacing rule requires a tiny change. Never collapse blank lines. Never remove or alter CSS, inline styles, font declarations, class names, or IDs.
+9. NAME INTEGRITY: If you localize personal names, localize FULL names consistently. Never output partial or broken surnames (e.g. "Hargre" instead of full surname).
+10. OUTPUT: Return ONLY the translated HTML. No explanations, no markdown code fences, no preamble. Raw HTML only.`;
+
+function buildConsistencyBlock(consistencyRules?: string): string {
+  if (!consistencyRules?.trim()) return "";
+  return `\n\nCANONICAL CONSISTENCY RULES (MUST APPLY GLOBALLY):\n${consistencyRules.trim()}\nAlways use these exact mappings everywhere in this output.`;
+}
 
 export function buildTranslationPrompt(
   html: string,
   fromLang: string,
   toLang: string,
   chunkContext?: { index: number; total: number },
+  consistencyRules?: string,
 ): string {
   const fromLabel = fromLang === "en" ? "English" : "German";
   const toLabel = toLang === "en" ? "English" : "German";
@@ -35,7 +43,7 @@ export function buildTranslationPrompt(
       ? `\n\nFRAGMENT ${chunkContext.index + 1} OF ${chunkContext.total}: Output the COMPLETE translated fragment—every element, every word. Do NOT truncate or skip any part. It will be concatenated with other fragments. No wrappers, no explanations.`
       : "";
 
-  return `Translate the following HTML from ${fromLabel} to ${toLabel}. Preserve all HTML structure exactly. Only translate text content. Apply cultural adaptation for names, dates, products, and nationalities as described in your instructions.${chunkNote}
+  return `Translate the following HTML from ${fromLabel} to ${toLabel}. Preserve all HTML structure exactly. Only translate text content. Apply cultural adaptation for names, dates, products, and nationalities as described in your instructions.${chunkNote}${buildConsistencyBlock(consistencyRules)}
 
 HTML to translate:
 ${html}`;
@@ -47,6 +55,7 @@ export function buildBodyOnlyTranslationPrompt(
   fromLang: string,
   toLang: string,
   chunkContext?: { index: number; total: number },
+  consistencyRules?: string,
 ): string {
   const fromLabel = fromLang === "en" ? "English" : "German";
   const toLabel = toLang === "en" ? "English" : "German";
@@ -56,7 +65,7 @@ export function buildBodyOnlyTranslationPrompt(
       ? ` This is fragment ${chunkContext.index + 1} of ${chunkContext.total}. Output the COMPLETE translated fragment—every element, every word. Do NOT truncate or skip. It will be concatenated with others.`
       : "";
 
-  return `Translate the following HTML from ${fromLabel} to ${toLabel}. This is the INNER HTML of a <body> tag only (the rest of the document is unchanged). Preserve all HTML structure. Do NOT add <!DOCTYPE>, <html>, <head>, or <body> tags. Preserve any comment placeholders exactly as-is (e.g. <!--SCRIPT_PLACEHOLDER_0-->). Only translate human-readable text.${chunkNote}
+  return `Translate the following HTML from ${fromLabel} to ${toLabel}. This is the INNER HTML of a <body> tag only (the rest of the document is unchanged). Preserve all HTML structure. Do NOT add <!DOCTYPE>, <html>, <head>, or <body> tags. Preserve any comment placeholders exactly as-is (e.g. <!--SCRIPT_PLACEHOLDER_0-->). Only translate human-readable text.${chunkNote}${buildConsistencyBlock(consistencyRules)}
 
 Body inner HTML to translate:
 ${bodyInnerHtml}`;
