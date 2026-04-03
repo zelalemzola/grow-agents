@@ -1,6 +1,11 @@
 /**
  * Generates a single ad image from a user prompt.
  * Uses the same image model and style directive as funnel images for consistency.
+ *
+ * IMPORTANT: `generateImage` from the AI SDK expects multimodal input as
+ * `{ images: DataContent[], text?: string }` — NOT an array of parts. Using the
+ * wrong shape caused reference images to be dropped and fallbacks to text-only
+ * generation (wrong product in output).
  */
 import { generateImage } from "ai";
 
@@ -21,34 +26,37 @@ const AD_IMAGE_CONTEXT = `IMPORTANT: These images are ADVERTISEMENT IMAGES that 
 
 /**
  * Non-negotiable rules when a product reference image is supplied.
- * Treated as strict “system-style” policy text in the generation prompt.
+ * The model receives that image as structured input; these instructions lock behavior.
  */
 const STRICT_PRODUCT_REFERENCE_SYSTEM = `# MANDATORY PRODUCT REFERENCE (NON-NEGOTIABLE)
 
-You are given a REFERENCE IMAGE of the real product. That reference defines the ONLY acceptable product in the output.
+You are given ONE reference IMAGE of the real product (attached as input). That image is the ONLY source of truth for how the product must look in your output.
 
 ## Absolute rule
-- The product visible in your generated image MUST be the SAME product as in the reference image—not a similar bottle, not a generic shampoo, not a different label or brand.
-- You are NOT allowed to invent, swap, or approximate the product. If the user’s scene describes people holding the product (e.g. happy customers, testimonials, “results” shots), the item in their hands MUST still be this exact product, reproduced faithfully.
+- Reproduce the product from the reference image with MAXIMUM visual fidelity. The object the person holds (or that appears on the table/shelf) MUST be the same physical product: not a different tub, jar, bottle, sachet, or brand design.
+- Supplements (creatine, protein, vitamins), cosmetics, and OTC items: match container shape, lid color, label layout, logo position, and every visible graphic element from the reference.
+- You are NOT allowed to substitute a “similar” or generic product. No stock bottles, no invented labels, no simplified artwork.
 
-## Visual fidelity (must match the reference)
-- Packaging shape, size, proportions, material finish (matte/gloss), cap or pump, and silhouette.
-- All colors, gradients, and print areas on the pack.
-- Typography, logo, brand name, claims, icons, barcodes, and any visible text—legible where the reference shows them.
-- For tubes, jars, bottles, or cartons: same form factor and orientation of graphics as the reference unless the brief explicitly requires a natural rotation in hand.
+## Pixel- and design-level fidelity
+- Match silhouette, proportions, height-to-width ratio, and perspective (allow natural hand rotation only).
+- Match colors, gradients, foil/holographic effects, and matte vs gloss finish.
+- Match typography, logo, brand name, flavor/variant text, icons, and regulatory marks as shown on the reference.
+- For tubs and wide jars: match the exact lid style (screw cap, flip cap, color) and any embossing or ridges.
 
-## Common ad scenarios (same rule applies)
-- Hair care, skincare, supplements, or any CPG: if the brief shows people smiling, before/after contexts, or “holding the product,” the held object is STILL this exact SKU from the reference—never a stand-in.
-- Multiple people or multiple hands: each product instance must match the reference; do not vary the design between subjects.
+## People-in-scene (e.g. fitness, testimonials, “happy customer”)
+- If the brief describes a person holding the product, composite that EXACT pack design into their hands. The held object must be recognizable as the same SKU as the reference—not a different colorway or competitor lookalike.
+- Multiple subjects: every visible instance of the product must match the same reference.
 
 ## Strict prohibitions
-- No generic “lookalike” products, no stock placeholder bottles, no simplified or cartoon packs when a reference was provided.
-- Do not change brand identity, colorway, or pack artwork to “fit the scene.”
+- No generic placeholders, no “approximate” branding, no swapping to a different product category.
+- Do not redraw the label as illegible blur when the reference shows readable text—preserve legibility and layout.
 
-## Success criterion
-A viewer comparing the ad to the reference product photo would recognize it as the same item immediately. Failure to match the reference product is a failure of the task.`;
+## Failure mode
+If the output product could be mistaken for a different brand or SKU than the reference image, the generation has failed.`;
 
-const PRODUCT_FIDELITY_CLOSING = `Execute the scene described in the instructions above while obeying every rule in the MANDATORY PRODUCT REFERENCE section. The reference image is the ground truth for the product only; render that product exactly in the final image.`;
+const PRODUCT_INPUT_PREAMBLE = `The image file supplied alongside this text is the AUTHORITATIVE product photograph. Build the entire scene around faithfully reproducing that exact packaging in the final render.`;
+
+const PRODUCT_FIDELITY_CLOSING = `Execute the marketing scene in the instructions below. The product in the final image must be visually indistinguishable in branding and packaging from the attached reference image.`;
 
 function buildAdImagePrompt(userPrompt: string): string {
   return `${AD_IMAGE_CONTEXT}\n\n${userPrompt.trim()}\n\n${IMAGE_MODEL_STYLE_DIRECTIVE}`;
@@ -56,12 +64,14 @@ function buildAdImagePrompt(userPrompt: string): string {
 
 function buildPromptWithProductReference(userPrompt: string): string {
   const body = buildAdImagePrompt(userPrompt);
-  return `${STRICT_PRODUCT_REFERENCE_SYSTEM}\n\n---\n\n${body}\n\n---\n\n${PRODUCT_FIDELITY_CLOSING}`;
+  return `${PRODUCT_INPUT_PREAMBLE}\n\n${STRICT_PRODUCT_REFERENCE_SYSTEM}\n\n---\n\n${body}\n\n---\n\n${PRODUCT_FIDELITY_CLOSING}`;
 }
 
 /**
  * Generates one ad-ready image. When productImageBase64 is provided, the model
- * is asked to incorporate the product from the reference image into the scene.
+ * receives it via the SDK's structured `images` + `text` prompt (required for
+ * reference conditioning). Does not fall back to text-only when a reference
+ * was supplied—caller should handle errors.
  */
 export async function generateAdImage(
   options: GenerateAdImageOptions,
@@ -71,18 +81,16 @@ export async function generateAdImage(
   const fullPrompt = buildAdImagePrompt(prompt);
 
   if (productImageBase64 && productImageBase64.startsWith("data:")) {
+    const textWithStrictProductRules = buildPromptWithProductReference(prompt);
     try {
-      const textWithStrictProductRules = buildPromptWithProductReference(prompt);
       const imageResult = await generateImage({
         model: imageModel,
-        prompt: [
-          { type: "image" as const, image: productImageBase64 },
-          {
-            type: "text" as const,
-            text: textWithStrictProductRules,
-          },
-        ] as unknown as string,
+        prompt: {
+          images: [productImageBase64],
+          text: textWithStrictProductRules,
+        },
         aspectRatio,
+        maxRetries: 2,
       });
       const mediaType = imageResult.image.mediaType ?? "image/png";
       return {
@@ -90,9 +98,10 @@ export async function generateAdImage(
         mediaType,
       };
     } catch (err) {
-      console.warn(
-        "[ad-image-generate] Product reference failed, falling back to text-only:",
-        err,
+      const msg =
+        err instanceof Error ? err.message : "Unknown image generation error";
+      throw new Error(
+        `Product-reference image generation failed (${msg}). Check your API keys (Google image models work best with a product reference). No fallback was used to avoid showing the wrong product.`,
       );
     }
   }
@@ -101,6 +110,7 @@ export async function generateAdImage(
     model: imageModel,
     prompt: fullPrompt,
     aspectRatio,
+    maxRetries: 2,
   });
   const mediaType = imageResult.image.mediaType ?? "image/png";
   return {
