@@ -17,8 +17,12 @@ export async function PATCH(
 
   const parsed = z
     .object({
-      imageIndex: z.number().int().min(1).max(5),
+      imageIndex: z.number().int().min(1).max(5).optional(),
+      imageKey: z.string().min(1).optional(),
       imageUrl: z.string().url().or(z.string().startsWith("data:")),
+    })
+    .refine((d) => d.imageKey != null || d.imageIndex != null, {
+      message: "Provide imageKey or imageIndex.",
     })
     .safeParse(body);
 
@@ -29,7 +33,13 @@ export async function PATCH(
     );
   }
 
-  const { imageIndex, imageUrl } = parsed.data;
+  const { imageIndex, imageKey, imageUrl } = parsed.data;
+  const key =
+    imageKey ??
+    (imageIndex != null ? `${imageIndex}-1` : "");
+  if (!key) {
+    return NextResponse.json({ error: "Missing image key." }, { status: 400 });
+  }
   const supabase = await createServerSupabaseClient();
 
   const { data: funnel, error: fetchError } = await supabase
@@ -47,7 +57,10 @@ export async function PATCH(
   }
 
   const current = (funnel.latest_images ?? {}) as Record<string, string>;
-  const updated = { ...current, [String(imageIndex)]: imageUrl };
+  const updated = { ...current, [key]: imageUrl };
+  if (imageIndex != null && imageKey == null) {
+    delete updated[String(imageIndex)];
+  }
 
   const { error: updateError } = await supabase
     .from("funnels")

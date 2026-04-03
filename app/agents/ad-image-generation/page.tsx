@@ -13,7 +13,7 @@ const cards = [
   {
     title: "Create New Project",
     description:
-      "Generate up to 5 ad-ready images at once from separate prompts. Optionally add a product reference image.",
+      "Up to five prompts with per-prompt generate, image count (1–5), and aspect ratio. Optional product reference.",
     href: "/agents/ad-image-generation/projects/new",
     icon: FolderPlus,
     variant: "default" as const,
@@ -45,7 +45,7 @@ export default function AdImageGenerationDashboardPage() {
               Ad Image Generation
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Generate 5 ad-ready images at once from separate prompts. Add a product reference or comment on specific images to regenerate only what you need.
+              Generate per prompt with your chosen count and aspect ratio. Add a product reference or open a project to regenerate individual images with comments.
             </p>
           </div>
         </div>

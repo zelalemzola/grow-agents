@@ -158,7 +158,7 @@ export function AdImageProjectsList() {
             No projects yet
           </p>
           <p className="mt-1.5 max-w-sm text-sm text-muted-foreground">
-            Create your first ad image project and generate 5 images at once from separate prompts
+            Create your first project and generate images per prompt with custom count and aspect ratio
           </p>
           <Button asChild size="lg" className="mt-6 gap-2">
             <Link href="/agents/ad-image-generation/projects/new">
@@ -237,13 +237,13 @@ export function AdImageProjectsList() {
                         if (prompts.length >= 1 && prompts[0]) {
                           const first = prompts[0].slice(0, 70);
                           return prompts.length === 5
-                            ? `${first}${first.length >= 70 ? "…" : ""} · 5 images`
+                            ? `${first}${first.length >= 70 ? "…" : ""} · ad images`
                             : first;
                         }
                       } catch {
                         // ignore
                       }
-                      return "Ad image project · 5 prompts";
+                      return "Ad image project";
                     })()}
                   </p>
                   <p className="mt-3 text-xs text-muted-foreground/80">

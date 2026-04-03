@@ -47,13 +47,36 @@ export interface FunnelListItem {
   updated_at: string;
 }
 
+/** Per-row defaults for count (1–5) and aspect ratio; index 0–4 = prompt 1–5. */
+export interface AdImagePromptSettings {
+  count: number;
+  aspectRatio: "3:4" | "16:9" | "1:1";
+}
+
 /** Ad-image-generation project payload stored in objective (JSON) */
 export interface AdImageObjective {
   prompts: [string, string, string, string, string];
+  /** @deprecated Prefer productImageUrls; kept for older projects. */
   productImageUrl?: string | null;
+  /** Optional product reference per prompt (HTTP URLs after upload). Index 0–4 = prompts 1–5. */
+  productImageUrls?: [
+    string | null,
+    string | null,
+    string | null,
+    string | null,
+    string | null,
+  ];
+  /** Last-used UI defaults per prompt row (optional; older projects may omit). */
+  promptSettings?: [
+    AdImagePromptSettings | null,
+    AdImagePromptSettings | null,
+    AdImagePromptSettings | null,
+    AdImagePromptSettings | null,
+    AdImagePromptSettings | null,
+  ];
 }
 
-/** Ad-image project: funnel with agent_slug "ad-image-generation". latest_images keys "1".."5" = generated images. */
+/** Ad-image project: funnel with agent_slug "ad-image-generation". latest_images keys "{p}-{v}" or legacy "1".."5". */
 export interface AdImageProjectRecord extends FunnelRecord {
   agent_slug: "ad-image-generation";
   objective: string; // JSON string of AdImageObjective

@@ -2,6 +2,7 @@ import { generateObject } from "ai";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { parseAdImageKey, formatAdImageKey } from "@/lib/ad-image-keys";
 import { getGateway } from "@/lib/ai-gateway";
 import { generateAdImage } from "@/lib/ad-image-generate";
 import { uploadImageToStorage } from "@/lib/funnel-image-storage";
@@ -12,13 +13,22 @@ import {
 
 export const maxDuration = 60;
 
-const regenerateSchema = z.object({
-  funnelId: z.string().uuid(),
-  /** Image index 1–5 (which of the 5 images to regenerate). */
-  imageIndex: z.number().int().min(1).max(5),
-  /** User comment describing the change (e.g. "make the background darker", "first image should show a woman"). */
-  comment: z.string().min(1).max(2000),
-});
+const aspectRatioSchema = z.enum(["3:4", "16:9", "1:1"]);
+
+const regenerateSchema = z
+  .object({
+    funnelId: z.string().uuid(),
+    /** Legacy: image index 1–5 (first variant of that prompt). */
+    imageIndex: z.number().int().min(1).max(5).optional(),
+    /** Preferred: storage key such as "3-2" or legacy "3". */
+    imageKey: z.string().optional(),
+    comment: z.string().min(1).max(2000),
+    /** Aspect ratio for the new image (default 16:9). */
+    aspectRatio: aspectRatioSchema.optional(),
+  })
+  .refine((d) => d.imageKey != null || d.imageIndex != null, {
+    message: "Provide imageKey or imageIndex.",
+  });
 
 const refinedPromptSchema = z.object({
   prompt: z
@@ -49,7 +59,32 @@ export async function POST(request: Request) {
     );
   }
 
-  const { funnelId, imageIndex, comment } = parsed.data;
+  const { funnelId, imageIndex, imageKey: rawKey, comment, aspectRatio } =
+    parsed.data;
+  const aspect = aspectRatio ?? "16:9";
+
+  let storageKey: string;
+  let promptSlot: number;
+
+  if (rawKey) {
+    const parsedKey = parseAdImageKey(rawKey);
+    if (!parsedKey) {
+      return NextResponse.json(
+        { error: "Invalid imageKey." },
+        { status: 400 },
+      );
+    }
+    storageKey = formatAdImageKey(parsedKey.prompt, parsedKey.variant);
+    promptSlot = parsedKey.prompt;
+  } else if (imageIndex != null) {
+    promptSlot = imageIndex;
+    storageKey = formatAdImageKey(imageIndex, 1);
+  } else {
+    return NextResponse.json(
+      { error: "Provide imageKey or imageIndex." },
+      { status: 400 },
+    );
+  }
 
   const supabase = await createServerSupabaseClient();
   const admin = createSupabaseAdminClient();
@@ -68,11 +103,28 @@ export async function POST(request: Request) {
     );
   }
 
-  let objective: { prompts: string[]; productImageUrl?: string | null };
+  let objective: {
+    prompts: string[];
+    productImageUrl?: string | null;
+    productImageUrls?: [
+      string | null,
+      string | null,
+      string | null,
+      string | null,
+      string | null,
+    ];
+  };
   try {
     objective = JSON.parse(funnel.objective as string) as {
       prompts: string[];
       productImageUrl?: string | null;
+      productImageUrls?: [
+        string | null,
+        string | null,
+        string | null,
+        string | null,
+        string | null,
+      ];
     };
   } catch {
     return NextResponse.json(
@@ -82,10 +134,10 @@ export async function POST(request: Request) {
   }
 
   const prompts = objective.prompts ?? [];
-  const originalPrompt = prompts[imageIndex - 1];
-  if (!originalPrompt) {
+  const originalPrompt = prompts[promptSlot - 1];
+  if (!originalPrompt?.trim()) {
     return NextResponse.json(
-      { error: "No original prompt for that image index." },
+      { error: "No original prompt for that image slot." },
       { status: 400 },
     );
   }
@@ -100,7 +152,8 @@ export async function POST(request: Request) {
 
   const newPrompt = refined.object.prompt;
 
-  const productImageUrl = objective.productImageUrl;
+  const perPromptUrl = objective.productImageUrls?.[promptSlot - 1];
+  const productImageUrl = perPromptUrl ?? objective.productImageUrl;
   let productBase64: string | undefined;
   if (productImageUrl?.startsWith("data:")) {
     productBase64 = productImageUrl;
@@ -119,15 +172,16 @@ export async function POST(request: Request) {
   const { dataUrl } = await generateAdImage({
     prompt: newPrompt,
     productImageBase64: productBase64,
+    aspectRatio: aspect,
   });
 
-  const key = String(imageIndex);
   const storageClient = admin ?? supabase;
-  const uploaded = await uploadImageToStorage(key, dataUrl, storageClient);
+  const uploaded = await uploadImageToStorage(storageKey, dataUrl, storageClient);
   const finalUrl = uploaded ?? dataUrl;
 
   const currentImages = (funnel.latest_images ?? {}) as Record<string, string>;
-  const updatedImages = { ...currentImages, [key]: finalUrl };
+  const updatedImages = { ...currentImages, [storageKey]: finalUrl };
+  delete updatedImages[String(promptSlot)];
 
   const { error: updateError } = await supabase
     .from("funnels")
@@ -147,7 +201,8 @@ export async function POST(request: Request) {
 
   return NextResponse.json({
     success: true,
-    imageIndex,
+    imageKey: storageKey,
+    imageIndex: promptSlot,
     imageUrl: finalUrl,
     funnel: {
       ...funnel,
