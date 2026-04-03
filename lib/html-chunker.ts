@@ -5,12 +5,15 @@
  * skipping, summarizing, or truncating content.
  */
 
-/** ~12k chars ≈ 3k tokens - conservative to prevent truncation/hallucination */
-const CHUNK_SIZE = 12_000;
+/**
+ * ~7k chars per chunk — smaller chunks reduce truncation, skipped sections, and
+ * quality drop on very long pages. Tradeoff: more sequential API calls.
+ */
+const CHUNK_SIZE = 7_000;
 
-/** Tags we can safely split after (closing tags) - block-level boundaries */
+/** Tags we can safely split after (closing tags) — prefer granular boundaries */
 const SPLIT_TAG_PATTERN =
-  /<\/(section|article|div|main|header|footer|aside|nav|blockquote|figure|figcaption|p|li|h[1-6]|table|tbody|tr|form|ul|ol)>/gi;
+  /<\/(section|article|div|main|header|footer|aside|nav|blockquote|figure|figcaption|p|span|li|h[1-6]|table|tbody|thead|tr|td|th|form|ul|ol|dl|dd|dt)>/gi;
 
 export function splitHtmlIntoChunks(html: string): string[] {
   if (html.length <= CHUNK_SIZE) {
@@ -29,10 +32,15 @@ export function splitHtmlIntoChunks(html: string): string[] {
     if (lastMatch) {
       splitPos = lastMatch.index! + lastMatch[0].length;
     } else {
-      // Fallback: split at last newline or > to avoid cutting mid-tag
+      // Prefer closing </p> inside slice (common in long single-column pages)
+      const lastP = slice.lastIndexOf("</p>");
       const lastNewline = slice.lastIndexOf("\n");
       const lastAngle = slice.lastIndexOf(">");
-      splitPos = Math.max(lastNewline, lastAngle, 1);
+      if (lastP > CHUNK_SIZE * 0.35) {
+        splitPos = lastP + "</p>".length;
+      } else {
+        splitPos = Math.max(lastNewline, lastAngle, 1);
+      }
     }
 
     chunks.push(remaining.slice(0, splitPos));

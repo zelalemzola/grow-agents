@@ -80,13 +80,21 @@ async function buildConsistencyRules(
   const result = await generateText({
     model: gateway("openai/gpt-4.1"),
     temperature: 0,
-    maxOutputTokens: 1200,
+    maxOutputTokens: 2800,
     system:
       "Return only plain text bullet points. No markdown header. No prose.",
     prompt: `Create canonical localization rules for translating a landing page from ${fromLabel} to ${toLabel}.
-Focus on names and product/medicine terms that must stay consistent across all chunks.
+These rules will be applied to EVERY translated chunk so terminology stays identical site-wide.
+
+Cover ALL that apply from this checklist (skip lines that do not apply to the excerpt):
+- People: each character/persona → one consistent TARGET full name (never mix English/German for the same person).
+- Our product / brand / medicine → official TARGET-market name (repeat if multiple mentions).
+- Competitor or "compared to" products: if the source names US-only comparison brands, map each to a TARGET-country equivalent at a SIMILAR popularity/tier and category (mass vs premium, OTC vs Rx where relevant).
+- Geography: if illustrative city/region names should move to the target locale, map SOURCE place => TARGET place.
+- Currency: if amounts or currencies appear, note SOURCE currency/label => TARGET (e.g. GBP/Pfund-style framing => Euro framing for Germany).
+
 Rules:
-- Output at most 25 bullets.
+- Output at most 35 bullets.
 - Each bullet format: SOURCE => TARGET
 - If unsure, keep SOURCE unchanged on target.
 - Never output partial names. Full names only.
@@ -99,7 +107,7 @@ ${sample}`,
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line.length > 0)
-    .slice(0, 25)
+    .slice(0, 35)
     .join("\n");
 }
 
