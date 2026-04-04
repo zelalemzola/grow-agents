@@ -12,7 +12,6 @@ import {
   RotateCcw,
   Code2,
   Palette,
-  Eye,
   History,
   FileText,
   FolderOpen,
@@ -37,6 +36,7 @@ import {
   FunnelVersionRecord,
   TemplateRecord,
 } from "@/lib/types";
+import { CopyInjectionOutputSide } from "@/components/copy-injection-output-side";
 
 type CodeTab = "html" | "css";
 type GenerationStreamEvent = {
@@ -674,8 +674,6 @@ export function CopyInjectionProjectEditor({
     }
   };
 
-  const preview = createPreviewSrcDoc(htmlDraft, cssDraft, imagesDraft);
-
   return (
     <div className="grid gap-6 xl:grid-cols-[1fr_1fr]">
       <section className="flex min-h-[80vh] flex-col overflow-hidden rounded-xl border border-border/60 bg-card shadow-sm">
@@ -1084,28 +1082,17 @@ export function CopyInjectionProjectEditor({
         </div>
       </section>
 
-      {/* Live Preview */}
-      <section className="overflow-hidden rounded-xl border border-border/60 bg-card shadow-sm">
-        <div className="flex items-center justify-between border-b border-border/60 bg-muted/30 px-5 py-3">
-          <h2 className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-            <Eye className="size-4" />
-            Live Preview
-          </h2>
-          <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
-            Live
-          </span>
-        </div>
-        <div className="p-3">
-          <iframe
-            key={previewKey}
-            title="live-funnel-preview"
-            className="h-[82vh] w-full rounded-lg border border-border/60 bg-white shadow-inner dark:bg-zinc-900"
-            sandbox="allow-same-origin allow-scripts"
-            allow="autoplay; fullscreen"
-            srcDoc={preview}
-          />
-        </div>
-      </section>
+      <CopyInjectionOutputSide
+        htmlDraft={htmlDraft}
+        cssDraft={cssDraft}
+        imagesDraft={imagesDraft}
+        previewKey={previewKey}
+        selectedProjectId={selectedProjectId}
+        onHtmlDraftChange={setHtmlDraft}
+        onImagesDraftChange={setImagesDraft}
+        onPreviewBump={() => setPreviewKey((k) => k + 1)}
+        onStatus={setStatus}
+      />
     </div>
   );
 }

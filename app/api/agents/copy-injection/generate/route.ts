@@ -25,6 +25,7 @@ import {
 } from "@/lib/agent1-guidelines";
 import { IMAGE_GENERATION_GUIDELINE } from "@/lib/image-generation-guideline";
 import { uploadImagesMapToStorage } from "@/lib/funnel-image-storage";
+import { injectGeneratedContentIntoScaffold } from "@/lib/scaffold-inject";
 import { getGateway } from "@/lib/ai-gateway";
 import {
   createServerSupabaseClient,
@@ -142,6 +143,13 @@ async function runGeneration(
     type: "status",
     message: "Planning funnel sections (structure + paragraph mapping).",
   });
+
+  const templateScaffoldForPlan = (template?.html_scaffold ?? "").trim();
+  const templateStructureHint =
+    templateScaffoldForPlan.length > 0
+      ? `\n**Template HTML scaffold (reference—align section types with these blocks; if copy needs more sections than the scaffold shows, repeat the matching pattern; if fewer, skip unused block types):**\n\`\`\`html\n${templateScaffoldForPlan.length > 2200 ? `${templateScaffoldForPlan.slice(0, 2200)}\n<!-- truncated -->` : templateScaffoldForPlan}\n\`\`\`\n`
+      : "";
+
   const sectionPlanResult = await generateObject({
     model: gateway("openai/gpt-4.1-mini"),
     schema: sectionPlanSchema,
@@ -160,7 +168,7 @@ Produce a section plan that maps the copy into funnel sections. **CRITICAL:** Yo
 Funnel name: ${parsedData.funnelName}
 Campaign context: ${parsedData.campaignContext ?? "N/A"}
 Template instructions: ${template?.instructions ?? "No template instructions provided"}
-
+${templateStructureHint}
 **Numbered paragraphs (assign each index 0..${Math.max(0, paragraphs.length - 1)} to a section):**
 ${paragraphPreview}
 
@@ -185,6 +193,19 @@ Create enough sections so all ${paragraphs.length} paragraphs are assigned. Foll
 
   const productImagesRaw = parsedData.productImages ?? [];
   const hasProductImage = productImagesRaw.length > 0;
+
+  /* Hero: prominent headline region + image slot (matches template layout in HTML step) */
+  const firstSec = sectionPlan.sections[0];
+  if (
+    firstSec?.id &&
+    (firstSec.type === "headline" || firstSec.type === "hook")
+  ) {
+    const c = firstSec.content ?? "";
+    if (!c.includes(`{{image:${firstSec.id}}}`)) {
+      const heroImg = `<div data-funnel-hero-media="true"><img src="{{image:${firstSec.id}}}" alt="" class="funnel-media funnel-hero-image" style="width:100%;max-width:100%;height:auto;display:block;border-radius:12px;" /></div>`;
+      firstSec.content = c.trim() ? heroImg + "<br><br>" + c : heroImg;
+    }
+  }
 
   /* Prepend image placeholder to testimonial and CTA sections so it gets into the HTML */
   for (const s of sectionPlan.sections) {
@@ -276,8 +297,28 @@ Create enough sections so all ${paragraphs.length} paragraphs are assigned. Foll
           }))
       : [];
 
+  const firstSection = sectionPlan.sections[0];
+  const heroImageCandidate: Omit<ImageCandidate, "isProductSection"> | null =
+    firstSection?.id &&
+    (firstSection.type === "headline" || firstSection.type === "hook") &&
+    !placeholderCandidates.some((p) => p.id === firstSection.id)
+      ? {
+          id: firstSection.id,
+          title: firstSection.title,
+          content: `[Hero / above-the-fold visual—use ONLY this context]:\n\n${(firstSection.content ?? "")
+            .replace(/<[^>]+>/g, " ")
+            .replace(/\s+/g, " ")
+            .trim()
+            .slice(0, 900)}`,
+          type: firstSection.type,
+          imagePrompt: firstSection.imagePrompt,
+          preferGif: firstSection.preferGif ?? false,
+        }
+      : null;
+
   const imageCandidatesBase: Omit<ImageCandidate, "isProductSection">[] = [
     ...placeholderCandidates,
+    ...(heroImageCandidate ? [heroImageCandidate] : []),
     ...testimonialCandidates,
     ...ctaCandidates,
   ];
@@ -346,6 +387,13 @@ Create enough sections so all ${paragraphs.length} paragraphs are assigned. Foll
   const templateInstructions = template?.instructions ?? "No strict template guidance. Use clean modern conversion layout.";
   const templateHtmlScaffold = template?.html_scaffold ?? "N/A";
   const templateCssScaffold = template?.css_scaffold ?? "N/A";
+  const templateCssTrimmed = template?.css_scaffold?.trim() ?? "";
+  const templateCssSnippetForHtml =
+    templateCssTrimmed.length > 0
+      ? templateCssTrimmed.length > 3200
+        ? `${templateCssTrimmed.slice(0, 3200)}\n/* …truncated… */`
+        : templateCssTrimmed
+      : "";
 
   const htmlOnlySchema = z.object({ html: z.string() });
   const cssOnlySchema = z.object({ css: z.string() });
@@ -395,6 +443,14 @@ IDs in order of appearance: ${placeholderIdList}
   if (ctaSectionIds.length > 0) {
     imageSlotsParts.push(`CTA sections: Content includes img tags—preserve them. IDs: ${ctaSectionIds.join(", ")}.`);
   }
+  if (
+    firstSec?.id &&
+    (firstSec.type === "headline" || firstSec.type === "hook")
+  ) {
+    imageSlotsParts.push(
+      `Hero (first section): preserve the hero image slot <img src="{{image:${firstSec.id}}}" ... /> from section content.`,
+    );
+  }
   const imageSlotsBlock =
     imageSlotsParts.length > 0
       ? `
@@ -403,21 +459,56 @@ IDs in order of appearance: ${placeholderIdList}
 
   const templateReplicationBlock = hasTemplate
     ? `
-**TEMPLATE REPLICATION (MANDATORY—output must look identical to the template):**
-1. STRUCTURE: Copy the template's HTML structure EXACTLY—same element hierarchy, nesting, and class names. Do NOT invent new tags or wrappers.
-2. CLASS NAMES: Use ONLY the template's exact class names. Extract every class from the template scaffold below and reuse them verbatim. No new class names (e.g. if template has "hero", "body", "cta-section", use those—do not add "section-hero" or "content-block").
-3. WHEN ADDING SECTIONS: If the section plan has MORE sections than the template shows, DUPLICATE the template's pattern. Same <section class="...">, same inner elements (h1/h2, p, etc.), same classes—only the text content changes. One body section in template = pattern for all body sections; same for testimonials, FAQs, CTAs.
-4. WHEN FEWER SECTIONS: Omit sections but keep the structure of included sections identical to the template.
-5. VISUAL FIDELITY: The generated funnel must be visually indistinguishable from the template—same layout, spacing, typography hierarchy. Only the copy/content differs. The template defines the look; your output must replicate it exactly.
+**TEMPLATE REPLICATION (MANDATORY—the page must match the selected template):**
+1. STRUCTURE: Mirror the template scaffold's HTML EXACTLY—same element hierarchy, nesting, and **the same class strings the template uses** on each kind of block (hero, body, testimonial, pricing/offer, FAQ, etc.). Do not substitute a generic "one layout for all sections" when the template uses different patterns per type.
+2. CLASS NAMES + TAG CHOICES: Use the template's classes verbatim. Also reuse the **same heading/body tag patterns** the scaffold uses (e.g. if the hero uses \`<p class="…">\` or \`<div class="title">\`, do not swap in a different \`<h1>\` style that changes the design). Map each plan section to the scaffold block that matches its **role**; duplicate that block's markup for extra sections of the same type.
+3. COPY LENGTH: **Longer copy** → repeat the template's section pattern more times, or add paragraphs **inside** the same wrapper elements the template uses—never switch to a generic layout or blow up font sizes. **Shorter copy** → omit whole block types if needed; keep remaining blocks identical to the scaffold; do not enlarge type to "fill" the page.
+4. REQUIRED ATTRIBUTES (do not skip): On each section's root (\`<section>\` or outermost wrapper for that section), set \`id="<section id from plan>"\` and \`data-section-type="<type from plan>"\`. Add these on the same node that already carries the template's classes.
+5. VISUAL FIDELITY: The result should look like **the template file with the user's words dropped in**—same columns, widths, spacing rhythm, and **type scale** as the template. Only the text changes; not the layout system.
 `
     : "";
+
+  const typographyScaleHtmlBlock = `
+**TYPOGRAPHY SCALE (MANDATORY):**
+- **Editorial, readable body copy:** Default to comfortable reading size for paragraphs (\`<p>\`). Do **not** wrap most body text in \`<h1>\`/\`<h2>\` or use headings for normal copy. Reserve \`<h1>\`–\`<h3>\` for true titles the template implies—not for every block.
+- **Do not invent oversized type:** Avoid inline styles like \`font-size: 2rem\` on body text. If the template does not show huge text, do not add it.
+- **Match the template's hierarchy:** If the scaffold uses modest headings, keep them modest; if it uses a single hero headline, only that block should read as the largest type.
+`;
+
+  const templateCssInHtmlPrompt =
+    templateCssSnippetForHtml.length > 0
+      ? `
+**Template CSS (reference—match implied font sizes, line-height, and spacing; do not exceed this scale for body copy):**
+\`\`\`css
+${templateCssSnippetForHtml}
+\`\`\`
+`
+      : "";
+
+  const sectionTypeDifferentiationBlock = `
+**SECTION TYPES MUST READ AS DIFFERENT BLOCKS:** Use the template's distinct patterns for offer/pricing (cta), reviews (testimonial), FAQ, and narrative (body)—do not flatten everything into one repeated generic section. \`data-section-type\` must match the plan (headline, hook, body, cta, testimonial, faq, image, proof) so pricing/reviews/FAQ are visually distinct when CSS is applied.
+`;
+
+  const heroFirstSectionBlock =
+    firstSec?.id &&
+    (firstSec.type === "headline" || firstSec.type === "hook")
+      ? `
+**HERO / FIRST SECTION (MANDATORY):** Section id="${firstSec.id}" is the hero. Reuse the **exact hero block structure** from the template scaffold (tags + classes)—same headline element as the template, not a new generic hero. Prominence comes from the template's design, not from larger font sizes than the template shows. Preserve \`<img src="{{image:${firstSec.id}}}" ... />\` / \`[data-funnel-hero-media]\` in the template's image column if present.
+**HERO VERTICAL RHYTHM:** Keep the hero block slightly tighter than a generic mid-page section—use modest padding above the first headline and below the hero block. Avoid large empty vertical gaps before the first line of copy or below the hero image unless the template scaffold already uses that much space; when in doubt, prefer a little less vertical whitespace than a full "section break" feel.
+`
+      : "";
 
   const htmlPrompt = `${copyContext}
 
 You are an expert HTML funnel builder. Output ONLY the HTML for the landing page body (no <html>, <head>, or <body>—just the inner content).
 ${scaffoldHasPlaceholder ? "\n**Template scaffold:** The template uses {{content}} or {{sections}} for your output. Your output will be injected into {{content}}. Use the SAME class names and HTML structure as the template's inner content—only the text changes.\n" : ""}
+${hasTemplate && !scaffoldHasPlaceholder ? "\n**Full-page template:** When the scaffold has no {{content}} placeholder, your HTML fragment is inserted inside the template document's <body>—you must still mirror the scaffold's inner section patterns exactly (do not replace with a generic layout).\n" : ""}
 ${imageSlotsBlock}
 ${templateReplicationBlock}
+${sectionTypeDifferentiationBlock}
+${heroFirstSectionBlock}
+${typographyScaleHtmlBlock}
+${templateCssInHtmlPrompt}
 ${placeholderBlock}
 ${testimonialImageBlock}
 ${ctaImageBlock}
@@ -435,9 +526,10 @@ ${ctaImageBlock}
 - Do not paste raw unformatted text—no wall-of-text. Preserve spacing and structure from the plan.
 **COMPLETE OUTPUT:** You MUST output the FULL HTML with EVERY section from the plan. Never truncate, abbreviate, or skip sections—no matter how long. Use semantic HTML. No markdown fences.
 
-ADAPTIVE LAYOUT:
-- If the section plan has MORE sections than the template shows, extend by DUPLICATING the template's section pattern. Same structure, same classes, same nesting—only content varies.
-- Mobile-first, clean typography, generous whitespace, full-width sections with max-width containers, prominent CTAs.
+ADAPTIVE LAYOUT (template-first):
+- More sections than the scaffold shows → **duplicate the matching template pattern** (same structure, classes, nesting). Longer copy → more instances or more \`<p>\`/list items inside the template's wrappers—not bigger fonts.
+- Fewer sections → omit unused block types; keep surviving blocks identical to the scaffold.
+- Prefer the template's spacing and containers; avoid a generic "marketing landing" look unless the template is one.
 
 Section Plan:
 ${sectionPlanJson}
@@ -588,14 +680,19 @@ ${templateHtmlScaffold}
 
 You are an expert HTML funnel builder. Output ONLY the HTML for these ${batch.length} sections (chunk ${b + 1} of ${batches.length}). No <html>, <head>, <body>. Just the section elements.
 
-**TEMPLATE REPLICATION (MANDATORY):** Use the template's EXACT class names, structure, and nesting. For each section you output, match the template's corresponding section type pattern.
+${templateReplicationBlock}
+${sectionTypeDifferentiationBlock}
+${b === 0 ? heroFirstSectionBlock : ""}
+${typographyScaleHtmlBlock}
+${templateCssInHtmlPrompt}
+${imageSlotsBlock}
 ${batchImageSlotsNote}
 ${placeholderBlock}
 ${batchTestimonialBlock}
 ${batchCtaBlock}
 **EXACT COPY:** Output the section content EXACTLY as provided. Preserve any <img src="{{image:SECTION_ID}}" ... /> tags and all <b>, <i>, <u> formatting in the content unchanged. No truncation, no omission.
 
-**TEMPLATE:** Use the template's exact class names and structure. Replicate the template's look exactly.
+Template guidance: ${templateInstructions}
 
 Template HTML scaffold (structure to replicate exactly):
 \`\`\`html
@@ -647,18 +744,27 @@ ${batchJson}`;
     }
   }
 
+  if (
+    firstSec?.id &&
+    (firstSec.type === "headline" || firstSec.type === "hook") &&
+    !html.includes(`{{image:${firstSec.id}}}`)
+  ) {
+    const escaped = firstSec.id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const sectionMatch = html.match(
+      new RegExp(`(<(?:section|div)[^>]*id=["']${escaped}["'][^>]*>)`, "i"),
+    );
+    if (sectionMatch) {
+      const heroImg = `<div data-funnel-hero-media="true"><img src="{{image:${firstSec.id}}}" alt="" class="funnel-media funnel-hero-image" style="width:100%;max-width:100%;height:auto;display:block;border-radius:12px;" /></div>`;
+      html = html.replace(sectionMatch[1], sectionMatch[1] + "\n" + heroImg);
+    }
+  }
+
   const CSS_LINK = '<link rel="stylesheet" href="styles.css" />';
 
   if (template?.html_scaffold?.trim()) {
-    const scaffold = template.html_scaffold.trim();
-    const hasContentPlaceholder = scaffold.includes("{{content}}") || scaffold.includes("{{sections}}");
-    if (hasContentPlaceholder) {
-      const placeholder = scaffold.includes("{{content}}") ? "{{content}}" : "{{sections}}";
-      html = scaffold.replace(new RegExp(placeholder.replace(/[{}]/g, "\\$&"), "g"), html);
-      if (scaffold.includes("{{styles}}")) {
-        html = html.replace(/\{\{styles\}\}/g, CSS_LINK);
-      }
-    }
+    html = injectGeneratedContentIntoScaffold(template.html_scaffold.trim(), html, {
+      stylesLink: CSS_LINK,
+    });
   }
 
   if (!/^\s*<!DOCTYPE\s/i.test(html.trim()) && !/^\s*<html[\s>]/i.test(html.trim())) {
@@ -704,6 +810,15 @@ ${html}
       ? `\n**CONTENT-STRUCTURE CLASSES (style these to match template):** .content-list (ul/ol)—styled list with appropriate spacing, bullets/numbers; .content-quote (blockquote)—distinct quote styling, optionally left border or italic. Match the template's typography and colors.\n`
       : "";
 
+  const sectionTypeCssBlock = `
+**SECTION TYPE VISIBILITY (MANDATORY DELTA):** The HTML uses \`data-section-type\` on section roots. Add rules so each section kind reads distinct (hero vs reviews vs offer vs FAQ vs body)—using the template's design tokens only. Prefer \`[data-section-type="…"]\` selectors. Differentiate with **background, border, spacing, layout**—not by making every block use larger \`font-size\` than the template body. Hero may be slightly bolder only if the template already implies it. Testimonials: card/quote feel. CTA: band/button emphasis. FAQ: Q/A rhythm. Style \`[data-funnel-hero-media]\` / \`.funnel-hero-image\` only if the template omits them. If fully styled, output a brief comment only.
+**FIRST SECTION / HERO SPACING:** When you add rules for the hero or first section (\`[data-section-type="headline"]\` / \`[data-section-type="hook"]\` first section, or first \`section\` in the document), prefer **slightly tighter** \`padding-top\` / \`padding-bottom\` (or \`margin\`) than generic body sections—enough breathing room but not oversized vertical bands—unless the template CSS already fixes those values (then do not override).
+`;
+
+  const typographyCssBlock = `
+**TYPOGRAPHY (CRITICAL):** Keep body copy **readable and restrained**. Base body text should feel like **15–18px** at typical viewport width (use \`rem\`/\`clamp\`, not huge \`px\` values). Headings: clear hierarchy but **no oversized display type** unless the template shows it. Avoid \`font-size\` above ~2rem for any single heading unless the template CSS already uses that scale.
+`;
+
   const cssPrompt = hasTemplateCss
     ? `${copyContext}
 
@@ -711,8 +826,10 @@ You are an expert CSS author. The template CSS below is the SOURCE OF TRUTH for 
 
 **TEMPLATE STYLE REPLICATION:** The funnel must look exactly like the selected template. Do NOT override template rules. Do NOT change colors, fonts, or spacing that the template already defines. Extract the template's design tokens (e.g. --color-primary, font-family, padding, border-radius) and reuse them in any new rules.
 
+**NO OVERSIZED TYPE ON DELTA:** For any new rule you add, \`font-size\` must stay **at or below** the template's implied scale for similar elements. Never add rules that make body paragraphs larger than the template's body. Prefer \`inherit\`, \`em\`, or matching \`rem\` to the template.
+
 **YOUR OUTPUT = DELTA ONLY:** Output ONLY CSS for selectors that are missing from the template. If every class in the HTML is already covered by the template, output a single comment: /* All classes styled by template */
-${contentStructureNote}
+${contentStructureNote}${sectionTypeCssBlock}${typographyCssBlock}
 **Classes in HTML:** ${classList || "(none found)"}
 
 **Template CSS (already applied—replicate its style for any new classes):**
@@ -726,8 +843,8 @@ ${html.length > 12000 ? html.slice(0, 12000) + "\n<!-- truncated -->" : html}
 \`\`\``
     : `${copyContext}
 
-You are an expert CSS author. Output the FULL CSS for this funnel. Style every class and element. Mobile-first, clean typography. Classes: ${classList || "(none)"}. Tags: ${tagList || "(none)"}.
-${contentStructureNote}
+You are an expert CSS author. Output the FULL CSS for this funnel. Style every class and element. Mobile-first. **Restrained typography:** \`body\` / main copy ~15–18px equivalent (\`font-size: clamp(0.95rem, 0.9rem + 0.2vw, 1.05rem)\` or similar); \`h1\` typically clamp(1.5rem, 4vw, 2rem); \`h2\` smaller than h1; avoid giant display sizes. Classes: ${classList || "(none)"}. Tags: ${tagList || "(none)"}.
+${contentStructureNote}${sectionTypeCssBlock}${typographyCssBlock}
 
 HTML:
 \`\`\`html
@@ -741,7 +858,7 @@ ${html.length > 12000 ? html.slice(0, 12000) + "\n<!-- truncated -->" : html}
     prompt: cssPrompt,
     maxOutputTokens: 65536,
   });
-  let cssDelta = (cssResult.object.css ?? "").trim().replace(/^```(?:css)?\s*\n?|```\s*$/gm, "").trim();
+  const cssDelta = (cssResult.object.css ?? "").trim().replace(/^```(?:css)?\s*\n?|```\s*$/gm, "").trim();
 
   let css = hasTemplateCss
     ? templateCssBase + (cssDelta && !cssDelta.startsWith("/*") ? "\n\n/* Extended/overrides */\n" + cssDelta : "\n\n" + cssDelta)
@@ -749,13 +866,16 @@ ${html.length > 12000 ? html.slice(0, 12000) + "\n<!-- truncated -->" : html}
 
   if (css.length < 50) {
     css = `* { box-sizing: border-box; }
-body { margin: 0; font-family: system-ui, sans-serif; line-height: 1.5; color: #1a1a1a; background: #fff; }
+body { margin: 0; font-family: system-ui, -apple-system, sans-serif; font-size: 16px; line-height: 1.55; color: #1a1a1a; background: #fff; }
 img, video { max-width: 100%; height: auto; display: block; }
-section { padding: 1.5rem 1rem; max-width: 720px; margin: 0 auto; }
-h1, h2, h3 { margin-top: 0; margin-bottom: 0.5em; }
-p { margin: 0 0 1em; }
-ul.content-list, ol.content-list { margin: 1em 0; padding-left: 1.5em; }
-blockquote.content-quote { margin: 1em 0; padding-left: 1em; border-left: 3px solid #ccc; font-style: italic; color: #444; }
+section { padding: 1rem 1rem; max-width: 42rem; margin: 0 auto; }
+section:first-of-type { padding-top: 0.85rem; padding-bottom: 1rem; }
+h1 { font-size: clamp(1.35rem, 3vw, 1.75rem); font-weight: 700; margin: 0 0 0.5em; line-height: 1.2; }
+h2 { font-size: clamp(1.15rem, 2.5vw, 1.35rem); font-weight: 650; margin: 0 0 0.45em; line-height: 1.25; }
+h3 { font-size: clamp(1.05rem, 2vw, 1.15rem); font-weight: 600; margin: 0 0 0.4em; line-height: 1.3; }
+p { margin: 0 0 0.85em; font-size: 1rem; }
+ul.content-list, ol.content-list { margin: 0.85em 0; padding-left: 1.25em; font-size: 1rem; }
+blockquote.content-quote { margin: 0.85em 0; padding-left: 1em; border-left: 3px solid #ccc; font-style: italic; color: #444; font-size: 0.98rem; }
 `;
   }
 
