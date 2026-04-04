@@ -2,7 +2,14 @@
 
 import JSZip from "jszip";
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+} from "react";
 import {
   Sparkles,
   MessageSquare,
@@ -37,6 +44,9 @@ import {
   TemplateRecord,
 } from "@/lib/types";
 import { CopyInjectionOutputSide } from "@/components/copy-injection-output-side";
+
+/** Debounce for auto-saving HTML/CSS when typing in the code tab textareas. */
+const CODE_AUTOSAVE_DEBOUNCE_MS = 2000;
 
 type CodeTab = "html" | "css";
 type GenerationStreamEvent = {
@@ -90,6 +100,18 @@ export function CopyInjectionProjectEditor({
   const htmlTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const cssTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const objectiveTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const htmlDraftRef = useRef(htmlDraft);
+  const cssDraftRef = useRef(cssDraft);
+
+  useEffect(() => {
+    htmlDraftRef.current = htmlDraft;
+  }, [htmlDraft]);
+  useEffect(() => {
+    cssDraftRef.current = cssDraft;
+  }, [cssDraft]);
+
+  const codeAutosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const pendingHighlightRef = useRef<{
     type: "html" | "css";
     startIndex: number;
@@ -211,6 +233,111 @@ export function CopyInjectionProjectEditor({
     const data = await response.json();
     setVersions((data.versions ?? []) as FunnelVersionRecord[]);
   };
+
+  const saveDraftToServer = useCallback(
+    async (
+      html: string,
+      css: string,
+      note: string | undefined,
+    ): Promise<FunnelRecord> => {
+      const response = await fetch(
+        `/api/agents/copy-injection/funnels/${selectedProjectId}/manual-save`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            html,
+            css,
+            note,
+          }),
+        },
+      );
+      let data: { error?: string; funnel?: FunnelRecord };
+      try {
+        data = await response.json();
+      } catch {
+        throw new Error(response.ok ? "Invalid response" : "Save failed.");
+      }
+      if (!response.ok) {
+        throw new Error(data?.error ?? "Save failed.");
+      }
+      return data.funnel as FunnelRecord;
+    },
+    [selectedProjectId],
+  );
+
+  /**
+   * Persists current (or overridden) HTML/CSS to the project so preview edits
+   * survive reload. Used after audit apply, editor saves, etc.
+   */
+  const persistProjectDraft = useCallback(
+    async (opts?: { html?: string; css?: string; note?: string }) => {
+      if (!selectedProjectId) return;
+      const html = (opts?.html ?? htmlDraftRef.current).trim();
+      const css = (opts?.css ?? cssDraftRef.current).trim();
+      if (!html || !css) return;
+      try {
+        const updated = await saveDraftToServer(
+          html,
+          css,
+          opts?.note?.trim() || "Auto-save",
+        );
+        setFullProject(updated);
+        setHtmlDraft(updated.latest_html ?? "");
+        setCssDraft(updated.latest_css ?? "");
+        setImagesDraft((updated.latest_images ?? {}) as Record<string, string>);
+        setPreviewKey((k) => k + 1);
+        await refreshVersions(selectedProjectId);
+        setStatus("Changes saved to project.");
+      } catch (error) {
+        setStatus(`Could not save changes: ${String(error)}`);
+      }
+    },
+    [selectedProjectId, saveDraftToServer],
+  );
+
+  const scheduleCodeEditorAutosave = useCallback(() => {
+    if (!selectedProjectId) return;
+    if (codeAutosaveTimerRef.current) {
+      clearTimeout(codeAutosaveTimerRef.current);
+    }
+    codeAutosaveTimerRef.current = setTimeout(() => {
+      codeAutosaveTimerRef.current = null;
+      void persistProjectDraft({ note: "Code editor" });
+    }, CODE_AUTOSAVE_DEBOUNCE_MS);
+  }, [selectedProjectId, persistProjectDraft]);
+
+  useEffect(() => {
+    return () => {
+      if (codeAutosaveTimerRef.current) {
+        clearTimeout(codeAutosaveTimerRef.current);
+        codeAutosaveTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (codeAutosaveTimerRef.current) {
+      clearTimeout(codeAutosaveTimerRef.current);
+      codeAutosaveTimerRef.current = null;
+    }
+  }, [selectedProjectId]);
+
+  const onHtmlCodeChange = useCallback(
+    (event: ChangeEvent<HTMLTextAreaElement>) => {
+      setHtmlDraft(event.target.value);
+      scheduleCodeEditorAutosave();
+    },
+    [scheduleCodeEditorAutosave],
+  );
+
+  const onCssCodeChange = useCallback(
+    (event: ChangeEvent<HTMLTextAreaElement>) => {
+      setCssDraft(event.target.value);
+      scheduleCodeEditorAutosave();
+    },
+    [scheduleCodeEditorAutosave],
+  );
 
   const handleGenerate = async () => {
     setIsGenerating(true);
@@ -536,32 +663,11 @@ export function CopyInjectionProjectEditor({
     setStatus("Saving project...");
 
     try {
-      const response = await fetch(
-        `/api/agents/copy-injection/funnels/${selectedProjectId}/manual-save`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            html: htmlDraft,
-            css: cssDraft,
-            note: manualSaveNote || undefined,
-          }),
-        },
+      const updatedFunnel = await saveDraftToServer(
+        htmlDraft,
+        cssDraft,
+        manualSaveNote || undefined,
       );
-
-      let data: { error?: string; funnel?: FunnelRecord };
-      try {
-        data = await response.json();
-      } catch {
-        throw new Error(response.ok ? "Invalid response" : "Save failed.");
-      }
-      if (!response.ok) {
-        throw new Error(data?.error ?? "Save failed.");
-      }
-
-      const updatedFunnel = data.funnel as FunnelRecord;
       setFullProject(updatedFunnel);
       setHtmlDraft(updatedFunnel.latest_html ?? "");
       setCssDraft(updatedFunnel.latest_css ?? "");
@@ -1025,13 +1131,17 @@ export function CopyInjectionProjectEditor({
                 {isSavingManual ? "Saving..." : "Save Project"}
               </Button>
             </div>
+            <p className="text-xs text-muted-foreground">
+              HTML/CSS edits auto-save {CODE_AUTOSAVE_DEBOUNCE_MS / 1000}s after you stop
+              typing (when a project is selected).
+            </p>
 
             {activeCodeTab === "html" ? (
               <textarea
                 ref={htmlTextareaRef}
                 className="h-full min-h-[320px] w-full flex-1 rounded-lg border border-input bg-[#0d1117] p-4 font-mono text-xs text-slate-300 placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                 value={htmlDraft}
-                onChange={(event) => setHtmlDraft(event.target.value)}
+                onChange={onHtmlCodeChange}
                 spellCheck={false}
               />
             ) : (
@@ -1039,7 +1149,7 @@ export function CopyInjectionProjectEditor({
                 ref={cssTextareaRef}
                 className="h-full min-h-[320px] w-full flex-1 rounded-lg border border-input bg-[#0d1117] p-4 font-mono text-xs text-slate-300 placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                 value={cssDraft}
-                onChange={(event) => setCssDraft(event.target.value)}
+                onChange={onCssCodeChange}
                 spellCheck={false}
               />
             )}
@@ -1091,7 +1201,11 @@ export function CopyInjectionProjectEditor({
         onHtmlDraftChange={setHtmlDraft}
         onImagesDraftChange={setImagesDraft}
         onPreviewBump={() => setPreviewKey((k) => k + 1)}
+        onPersistProject={persistProjectDraft}
         onStatus={setStatus}
+        funnelName={funnelName}
+        funnelObjective={objective}
+        funnelCampaignContext={campaignContext}
       />
     </div>
   );

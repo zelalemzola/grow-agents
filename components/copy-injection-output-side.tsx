@@ -37,6 +37,7 @@ import {
   Palette,
   X,
   Upload,
+  FileSearch,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -68,6 +69,9 @@ import {
 } from "@/components/ui/popover";
 import { createPreviewSrcDoc } from "@/lib/funnel-preview";
 import { prepareSectionHtmlForEditor } from "@/lib/section-editor-html";
+import { FunnelAuditModal } from "@/components/funnel-audit-modal";
+import type { AuditChunkRow } from "@/components/funnel-audit-modal";
+import type { FunnelFinalAudit } from "@/lib/funnel-audit-schema";
 import {
   getSectionOuterHtml,
   getTopLevelSectionIds,
@@ -320,7 +324,13 @@ export function CopyInjectionOutputSide({
   onHtmlDraftChange,
   onImagesDraftChange,
   onPreviewBump,
+  onPersistProject,
   onStatus,
+  funnelName = "",
+  funnelObjective = "",
+  funnelCampaignContext = "",
+  auditLocale = "",
+  auditMarket = "",
 }: {
   htmlDraft: string;
   cssDraft: string;
@@ -330,7 +340,19 @@ export function CopyInjectionOutputSide({
   onHtmlDraftChange: (next: string) => void;
   onImagesDraftChange: (next: Record<string, string>) => void;
   onPreviewBump: () => void;
+  /** Persists HTML/CSS to the server so preview edits survive reload. */
+  onPersistProject?: (opts?: {
+    html?: string;
+    css?: string;
+    note?: string;
+  }) => Promise<void>;
   onStatus: (message: string) => void;
+  /** Passed into the audit API only; does not affect generation. */
+  funnelName?: string;
+  funnelObjective?: string;
+  funnelCampaignContext?: string;
+  auditLocale?: string;
+  auditMarket?: string;
 }) {
   const [outputTab, setOutputTab] = useState<OutputTab>("preview");
   const [editorMode, setEditorMode] = useState(false);
@@ -370,6 +392,112 @@ export function CopyInjectionOutputSide({
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
   const [sectionForeColor, setSectionForeColor] = useState("#171717");
   const insertProductFileRef = useRef<HTMLInputElement>(null);
+
+  const [auditOpen, setAuditOpen] = useState(false);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditError, setAuditError] = useState<string | null>(null);
+  const [auditFinal, setAuditFinal] = useState<FunnelFinalAudit | null>(null);
+  const [auditChunkMeta, setAuditChunkMeta] = useState<
+    | {
+        sectionId: string;
+        findingsCount: number;
+        sectionSummary: string;
+      }[]
+    | null
+  >(null);
+  const [auditSectionCount, setAuditSectionCount] = useState(0);
+  const [auditGeneratedAt, setAuditGeneratedAt] = useState<Date | null>(null);
+  const [auditChunkAudits, setAuditChunkAudits] = useState<
+    AuditChunkRow[] | null
+  >(null);
+  const [auditUndoStack, setAuditUndoStack] = useState<string[]>([]);
+  const [auditRedoStack, setAuditRedoStack] = useState<string[]>([]);
+
+  const commitAuditHtml = useCallback(
+    (next: string) => {
+      setAuditUndoStack((u) => [...u, htmlDraftRef.current]);
+      setAuditRedoStack([]);
+      onHtmlDraftChange(next);
+      onPreviewBump();
+      void onPersistProject?.({
+        html: next,
+        note: "Audit fixes applied",
+      });
+    },
+    [onHtmlDraftChange, onPreviewBump, onPersistProject],
+  );
+
+  const undoAuditHtml = useCallback(() => {
+    setAuditUndoStack((undo) => {
+      if (undo.length === 0) return undo;
+      const prev = undo[undo.length - 1]!;
+      setAuditRedoStack((r) => [...r, htmlDraftRef.current]);
+      onHtmlDraftChange(prev);
+      onPreviewBump();
+      void onPersistProject?.({ html: prev, note: "Undo audit change" });
+      return undo.slice(0, -1);
+    });
+  }, [onHtmlDraftChange, onPreviewBump, onPersistProject]);
+
+  const redoAuditHtml = useCallback(() => {
+    setAuditRedoStack((redo) => {
+      if (redo.length === 0) return redo;
+      const next = redo[redo.length - 1]!;
+      setAuditUndoStack((u) => [...u, htmlDraftRef.current]);
+      onHtmlDraftChange(next);
+      onPreviewBump();
+      void onPersistProject?.({ html: next, note: "Redo audit change" });
+      return redo.slice(0, -1);
+    });
+  }, [onHtmlDraftChange, onPreviewBump, onPersistProject]);
+
+  const runFunnelAudit = useCallback(async () => {
+    if (!htmlDraft.trim()) return;
+    setAuditLoading(true);
+    setAuditError(null);
+    onStatus("Running funnel audit…");
+    try {
+      const res = await fetch("/api/agents/copy-injection/audit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          html: htmlDraft,
+          css: cssDraft,
+          objective: funnelObjective,
+          campaignContext: funnelCampaignContext,
+          funnelName,
+          locale: auditLocale,
+          market: auditMarket,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setAuditError(data?.error ?? "Audit failed.");
+        onStatus("Audit failed.");
+        return;
+      }
+      setAuditFinal(data.final as FunnelFinalAudit);
+      setAuditChunkMeta(data.chunks ?? null);
+      setAuditChunkAudits((data.chunkAudits as AuditChunkRow[] | undefined) ?? null);
+      setAuditSectionCount(data.meta?.sectionCount ?? 0);
+      setAuditGeneratedAt(new Date());
+      onStatus("Funnel audit complete.");
+    } catch (e) {
+      setAuditError(String(e));
+      onStatus("Audit failed.");
+    } finally {
+      setAuditLoading(false);
+    }
+  }, [
+    htmlDraft,
+    cssDraft,
+    funnelObjective,
+    funnelCampaignContext,
+    funnelName,
+    auditLocale,
+    auditMarket,
+    onStatus,
+  ]);
 
   useEffect(() => {
     htmlDraftRef.current = htmlDraft;
@@ -607,7 +735,8 @@ export function CopyInjectionOutputSide({
           );
           onHtmlDraftChange(next);
           onPreviewBump();
-          onStatus("Link updated — save project to persist.");
+          void onPersistProject?.({ html: next, note: "Link updated in preview" });
+          onStatus("Link updated and saved.");
         }
       }
     };
@@ -633,7 +762,7 @@ export function CopyInjectionOutputSide({
     const cleanup = () => cleanups.forEach((fn) => fn());
     editorCleanupRef.current = cleanup;
     return cleanup;
-  }, [editorMode, onHtmlDraftChange, onPreviewBump, onStatus]);
+  }, [editorMode, onHtmlDraftChange, onPreviewBump, onPersistProject, onStatus]);
 
   useEffect(() => {
     return () => {
@@ -707,9 +836,10 @@ export function CopyInjectionOutputSide({
       );
       onHtmlDraftChange(merged);
       onPreviewBump();
+      void onPersistProject?.({ html: merged, note: "Section inserted" });
       setInsertSheetOpen(false);
       setInsertStep("pick");
-      onStatus("Section inserted — save project to persist.");
+      onStatus("Section inserted and saved.");
     } catch (e) {
       onStatus(`Insert failed: ${String(e)}`);
     } finally {
@@ -725,7 +855,8 @@ export function CopyInjectionOutputSide({
     onHtmlDraftChange(next);
     setSectionModalId(null);
     onPreviewBump();
-    onStatus("Section updated — save project to persist.");
+    void onPersistProject?.({ html: next, note: "Section editor" });
+    onStatus("Section updated and saved.");
   };
 
   const applyLinkToSelection = () => {
@@ -849,6 +980,28 @@ export function CopyInjectionOutputSide({
                   </TooltipContent>
                 </Tooltip>
               ) : null}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="secondary"
+                    className="size-8 shrink-0 rounded-full border border-sky-300/45 bg-gradient-to-br from-sky-300/25 to-sky-400/10 text-sky-800 shadow-sm transition hover:scale-105 hover:shadow-md dark:border-sky-500/30 dark:from-sky-500/25 dark:to-sky-600/10 dark:text-sky-100"
+                    disabled={!htmlDraft.trim() || auditLoading}
+                    aria-label="Audit funnel"
+                    onClick={() => setAuditOpen(true)}
+                  >
+                    {auditLoading ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <FileSearch className="size-4" />
+                    )}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="max-w-[14rem] text-xs">
+                  Audit funnel — full-page review (does not change your HTML)
+                </TooltipContent>
+              </Tooltip>
               <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
                 Live
               </span>
@@ -1650,6 +1803,31 @@ export function CopyInjectionOutputSide({
             )}
           </SheetContent>
         </Sheet>
+
+        <FunnelAuditModal
+          open={auditOpen}
+          onOpenChange={setAuditOpen}
+          loading={auditLoading}
+          error={auditError}
+          final={auditFinal}
+          chunkMeta={auditChunkMeta}
+          chunkAudits={auditChunkAudits}
+          sectionCount={auditSectionCount}
+          funnelName={funnelName}
+          locale={auditLocale}
+          market={auditMarket}
+          generatedAt={auditGeneratedAt}
+          onRunAudit={() => void runFunnelAudit()}
+          htmlDraft={htmlDraft}
+          previewCss={cssDraft}
+          previewImages={imagesDraft}
+          funnelObjective={funnelObjective}
+          onApplyHtml={commitAuditHtml}
+          onAuditUndo={undoAuditHtml}
+          onAuditRedo={redoAuditHtml}
+          canAuditUndo={auditUndoStack.length > 0}
+          canAuditRedo={auditRedoStack.length > 0}
+        />
       </section>
     </TooltipProvider>
   );
