@@ -38,6 +38,9 @@ import {
   X,
   Upload,
   FileSearch,
+  Maximize2,
+  Minimize2,
+  Heading2,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -67,7 +70,10 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { createPreviewSrcDoc } from "@/lib/funnel-preview";
+import {
+  createPreviewSrcDoc,
+  createSectionFocusedPreviewSrcDoc,
+} from "@/lib/funnel-preview";
 import { prepareSectionHtmlForEditor } from "@/lib/section-editor-html";
 import { FunnelAuditModal } from "@/components/funnel-audit-modal";
 import type { AuditChunkRow } from "@/components/funnel-audit-modal";
@@ -79,6 +85,17 @@ import {
   replaceSectionOuterHtml,
   serializeDocumentPreservingDoctype,
 } from "@/lib/funnel-html-manipulate";
+import {
+  buildUserComponentHtml,
+  defaultUserComponentFields,
+  ensureUserComponentCss,
+  validateUserComponent,
+  type UserComponentFields,
+  type UserComponentKind,
+  type RadiusToken,
+  type ShadowToken,
+  type SpacingToken,
+} from "@/lib/funnel-user-components";
 import { cn } from "@/lib/utils";
 
 function stripScripts(html: string): string {
@@ -282,6 +299,50 @@ const SECTION_PRESETS = [
   },
 ] as const;
 
+const COMPONENT_PRESETS: {
+  kind: UserComponentKind;
+  icon: typeof Type;
+  title: string;
+  subtitle: string;
+  accent: string;
+}[] = [
+  {
+    kind: "heading",
+    icon: Heading2,
+    title: "Heading",
+    subtitle: "Section title (H2–H4)",
+    accent: "from-violet-500/20 to-purple-500/10",
+  },
+  {
+    kind: "paragraph",
+    icon: Type,
+    title: "Paragraph",
+    subtitle: "Body text block",
+    accent: "from-slate-500/20 to-zinc-500/10",
+  },
+  {
+    kind: "link",
+    icon: Link2,
+    title: "Link",
+    subtitle: "Text link with URL",
+    accent: "from-sky-500/20 to-blue-500/10",
+  },
+  {
+    kind: "image",
+    icon: ImageIcon,
+    title: "Image",
+    subtitle: "Image from URL",
+    accent: "from-emerald-500/20 to-teal-500/10",
+  },
+  {
+    kind: "divider",
+    icon: Minus,
+    title: "Divider",
+    subtitle: "Horizontal rule",
+    accent: "from-neutral-500/15 to-stone-500/10",
+  },
+];
+
 function ToolbarIcon({
   label,
   onClick,
@@ -318,6 +379,7 @@ function ToolbarIcon({
 export function CopyInjectionOutputSide({
   htmlDraft,
   cssDraft,
+  onCssDraftChange,
   imagesDraft,
   previewKey,
   selectedProjectId,
@@ -334,6 +396,7 @@ export function CopyInjectionOutputSide({
 }: {
   htmlDraft: string;
   cssDraft: string;
+  onCssDraftChange: (next: string) => void;
   imagesDraft: Record<string, string>;
   previewKey: number;
   selectedProjectId: string;
@@ -357,6 +420,8 @@ export function CopyInjectionOutputSide({
   const [outputTab, setOutputTab] = useState<OutputTab>("preview");
   const [editorMode, setEditorMode] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const previewContainerRef = useRef<HTMLDivElement | null>(null);
+  const [isPreviewFullscreen, setIsPreviewFullscreen] = useState(false);
 
   const [mediaModalId, setMediaModalId] = useState<string | null>(null);
   const [mediaComment, setMediaComment] = useState("");
@@ -372,6 +437,11 @@ export function CopyInjectionOutputSide({
   );
 
   const [sectionModalId, setSectionModalId] = useState<string | null>(null);
+  const [sectionModalTab, setSectionModalTab] = useState<"manual" | "ai">(
+    "manual",
+  );
+  const [sectionAiPrompt, setSectionAiPrompt] = useState("");
+  const [sectionAiLoading, setSectionAiLoading] = useState(false);
   const sectionEditorRef = useRef<HTMLDivElement | null>(null);
   const htmlDraftRef = useRef(htmlDraft);
   const editorCleanupRef = useRef<(() => void) | null>(null);
@@ -384,6 +454,15 @@ export function CopyInjectionOutputSide({
   >(null);
 
   const [insertSheetOpen, setInsertSheetOpen] = useState(false);
+  const [insertSheetTab, setInsertSheetTab] = useState<"sections" | "components">(
+    "sections",
+  );
+  const [insertMode, setInsertMode] = useState<"section" | "component">("section");
+  const [selectedComponentKind, setSelectedComponentKind] =
+    useState<UserComponentKind | null>(null);
+  const [componentFields, setComponentFields] = useState<UserComponentFields>(() =>
+    defaultUserComponentFields(),
+  );
   const [insertStep, setInsertStep] = useState<"pick" | "confirm">("pick");
   const [insertAfterId, setInsertAfterId] = useState<string | null>(null);
   const [insertPrompt, setInsertPrompt] = useState("");
@@ -392,6 +471,7 @@ export function CopyInjectionOutputSide({
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
   const [sectionForeColor, setSectionForeColor] = useState("#171717");
   const insertProductFileRef = useRef<HTMLInputElement>(null);
+  const componentImageFileRef = useRef<HTMLInputElement>(null);
 
   const [auditOpen, setAuditOpen] = useState(false);
   const [auditLoading, setAuditLoading] = useState(false);
@@ -504,11 +584,34 @@ export function CopyInjectionOutputSide({
   }, [htmlDraft]);
 
   useEffect(() => {
+    const onFs = () => {
+      setIsPreviewFullscreen(Boolean(document.fullscreenElement));
+    };
+    document.addEventListener("fullscreenchange", onFs);
+    return () => document.removeEventListener("fullscreenchange", onFs);
+  }, []);
+
+  const togglePreviewFullscreen = useCallback(() => {
+    const el = previewContainerRef.current;
+    if (!el) return;
+    if (!document.fullscreenElement) {
+      void el.requestFullscreen?.().catch(() => {
+        onStatus("Fullscreen is not available in this browser.");
+      });
+    } else {
+      void document.exitFullscreen?.().catch(() => {});
+    }
+  }, [onStatus]);
+
+  useEffect(() => {
     if (!sectionModalId) {
       setPendingInlineImageId(null);
       setInlineImagePrompt("");
       return;
     }
+    setSectionModalTab("manual");
+    setSectionAiPrompt("");
+    setSectionAiLoading(false);
     const html = getSectionOuterHtml(htmlDraftRef.current, sectionModalId);
     const id = window.setTimeout(() => {
       if (sectionEditorRef.current && html) {
@@ -663,6 +766,17 @@ export function CopyInjectionOutputSide({
       onStatus("Add a placeholder and enter an image description first.");
       return;
     }
+    if (!sectionModalId) {
+      onStatus("Section editor is not open.");
+      return;
+    }
+    const raw = sectionEditorRef.current?.innerHTML ?? "";
+    const clean = stripScripts(raw);
+    const mergedHtml = replaceSectionOuterHtml(
+      htmlDraftRef.current,
+      sectionModalId,
+      clean,
+    );
     const sid = pendingInlineImageId;
     const prevUrl = imagesDraft[sid];
     if (prevUrl) {
@@ -679,7 +793,7 @@ export function CopyInjectionOutputSide({
           body: JSON.stringify({
             sectionId: sid,
             comment: inlineImagePrompt.trim(),
-            currentHtml: htmlDraft,
+            currentHtml: mergedHtml,
           }),
         },
       );
@@ -691,12 +805,122 @@ export function CopyInjectionOutputSide({
       if (data.latest_images) {
         onImagesDraftChange(data.latest_images as Record<string, string>);
       }
+      onHtmlDraftChange(mergedHtml);
+      void onPersistProject?.({
+        html: mergedHtml,
+        note: "Inline image generated",
+      });
       onPreviewBump();
-      onStatus("Image ready — save the section to keep HTML changes.");
+      onStatus(
+        "Image generated. The section HTML now includes this placeholder; you can keep editing or close.",
+      );
     } catch (e) {
       onStatus(`Failed: ${String(e)}`);
     } finally {
       setRegeneratingId(null);
+    }
+  };
+
+  const getSectionAiPreviewSrcDoc = () => {
+    if (!sectionModalId) return "";
+    const raw = sectionEditorRef.current?.innerHTML ?? "";
+    const clean = stripScripts(raw);
+    const merged =
+      clean.trim().length > 0
+        ? replaceSectionOuterHtml(
+            htmlDraftRef.current,
+            sectionModalId,
+            clean,
+          )
+        : htmlDraftRef.current;
+    return createSectionFocusedPreviewSrcDoc(
+      merged,
+      cssDraft,
+      imagesDraft,
+      sectionModalId,
+    );
+  };
+
+  const handleSectionAiEdit = async () => {
+    if (!selectedProjectId || !sectionModalId) {
+      onStatus("Select a project and section first.");
+      return;
+    }
+    const prompt = sectionAiPrompt.trim();
+    if (prompt.length < 4) {
+      onStatus("Describe the change in at least a few words.");
+      return;
+    }
+    setSectionAiLoading(true);
+    onStatus("Applying AI edit to this section...");
+    try {
+      const raw = sectionEditorRef.current?.innerHTML ?? "";
+      const clean = stripScripts(raw);
+      const mergedHtml =
+        clean.trim().length > 0
+          ? replaceSectionOuterHtml(
+              htmlDraftRef.current,
+              sectionModalId,
+              clean,
+            )
+          : htmlDraftRef.current;
+      const res = await fetch("/api/agents/copy-injection/edit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          funnelId: selectedProjectId,
+          editComment: prompt,
+          currentHtml: mergedHtml,
+          currentCss: cssDraft,
+          focusSectionId: sectionModalId,
+        }),
+      });
+      const data = (await res.json()) as {
+        error?: unknown;
+        latest_html?: string;
+        latest_css?: string;
+        latest_images?: Record<string, string>;
+      };
+      if (!res.ok) {
+        const err =
+          typeof data?.error === "string"
+            ? data.error
+            : typeof data?.error === "object" && data.error !== null
+              ? JSON.stringify(data.error)
+              : "AI edit failed.";
+        onStatus(err);
+        return;
+      }
+      if (data.latest_html !== undefined) {
+        onHtmlDraftChange(data.latest_html);
+        htmlDraftRef.current = data.latest_html;
+      }
+      if (data.latest_css !== undefined) {
+        onCssDraftChange(data.latest_css);
+      }
+      if (data.latest_images) {
+        onImagesDraftChange(data.latest_images);
+      }
+      const updated = data.latest_html ?? mergedHtml;
+      const newSection = getSectionOuterHtml(updated, sectionModalId);
+      if (newSection && sectionEditorRef.current) {
+        sectionEditorRef.current.innerHTML =
+          prepareSectionHtmlForEditor(newSection);
+      }
+      void onPersistProject?.({
+        html: data.latest_html ?? mergedHtml,
+        css: data.latest_css ?? cssDraft,
+        note: "AI section edit",
+      });
+      onPreviewBump();
+      setSectionAiPrompt("");
+      onStatus(
+        "AI changes applied to this section. Check the preview or switch to Manual edit.",
+      );
+    } catch (e) {
+      onStatus(`AI edit failed: ${String(e)}`);
+    } finally {
+      setSectionAiLoading(false);
     }
   };
 
@@ -714,6 +938,9 @@ export function CopyInjectionOutputSide({
       e.preventDefault();
       e.stopPropagation();
       const t = e.currentTarget as HTMLElement;
+      if (document.fullscreenElement) {
+        void document.exitFullscreen().catch(() => {});
+      }
       queueMicrotask(() => setSectionModalId(t.id));
     };
 
@@ -790,11 +1017,17 @@ export function CopyInjectionOutputSide({
     setInsertProduct(null);
     setInsertStep("pick");
     setSelectedPresetId(null);
+    setInsertSheetTab("sections");
+    setInsertMode("section");
+    setSelectedComponentKind(null);
+    setComponentFields(defaultUserComponentFields());
     if (insertProductFileRef.current) insertProductFileRef.current.value = "";
+    if (componentImageFileRef.current) componentImageFileRef.current.value = "";
     queueMicrotask(() => setInsertSheetOpen(true));
   };
 
   const pickPreset = (preset: (typeof SECTION_PRESETS)[number]) => {
+    setInsertMode("section");
     setSelectedPresetId(preset.id);
     if (preset.id === "custom") {
       setInsertPrompt("");
@@ -802,6 +1035,50 @@ export function CopyInjectionOutputSide({
       setInsertPrompt(preset.prompt);
     }
     setInsertStep("confirm");
+  };
+
+  const pickComponentKind = (kind: UserComponentKind) => {
+    setInsertMode("component");
+    setSelectedComponentKind(kind);
+    setComponentFields(defaultUserComponentFields());
+    if (componentImageFileRef.current) componentImageFileRef.current.value = "";
+    setInsertStep("confirm");
+  };
+
+  const handleInsertComponent = () => {
+    if (!insertAfterId || !selectedComponentKind || !selectedProjectId) {
+      onStatus("Select where to insert and a project.");
+      return;
+    }
+    const err = validateUserComponent(selectedComponentKind, componentFields);
+    if (err) {
+      onStatus(err);
+      return;
+    }
+    const domId = `funnel-comp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
+    const fragment = buildUserComponentHtml(
+      selectedComponentKind,
+      componentFields,
+      domId,
+    );
+    const merged = insertSectionAfterHtml(htmlDraft, insertAfterId, fragment);
+    const nextCss = ensureUserComponentCss(cssDraft);
+    onHtmlDraftChange(merged);
+    if (nextCss !== cssDraft) {
+      onCssDraftChange(nextCss);
+    }
+    onPreviewBump();
+    void onPersistProject?.({
+      html: merged,
+      css: nextCss,
+      note: "Inline component",
+    });
+    setInsertSheetOpen(false);
+    setInsertStep("pick");
+    setSelectedComponentKind(null);
+    setInsertMode("section");
+    if (componentImageFileRef.current) componentImageFileRef.current.value = "";
+    onStatus("Component added and saved.");
   };
 
   const handleInsertSection = async () => {
@@ -853,9 +1130,14 @@ export function CopyInjectionOutputSide({
     const clean = stripScripts(raw);
     const next = replaceSectionOuterHtml(htmlDraftRef.current, sectionModalId, clean);
     onHtmlDraftChange(next);
+    htmlDraftRef.current = next;
     setSectionModalId(null);
     onPreviewBump();
-    void onPersistProject?.({ html: next, note: "Section editor" });
+    void onPersistProject?.({
+      html: next,
+      css: cssDraft,
+      note: "Section editor",
+    });
     onStatus("Section updated and saved.");
   };
 
@@ -1018,12 +1300,49 @@ export function CopyInjectionOutputSide({
                 preserved by the generator.
               </p>
             ) : null}
-            <div className="relative min-h-0 flex-1">
+            <div
+              ref={previewContainerRef}
+              className={cn(
+                "relative min-h-0 flex-1 rounded-lg bg-muted/20",
+                isPreviewFullscreen &&
+                  "flex h-screen min-h-0 w-full max-w-none flex-col rounded-none border-0 bg-zinc-950 p-0 [&:fullscreen]:h-full [&:fullscreen]:min-h-full",
+              )}
+            >
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="secondary"
+                    className="absolute right-3 top-3 z-20 h-10 w-10 rounded-full border border-border/60 shadow-md"
+                    onClick={togglePreviewFullscreen}
+                    aria-label={
+                      isPreviewFullscreen ? "Exit fullscreen" : "Fullscreen preview"
+                    }
+                  >
+                    {isPreviewFullscreen ? (
+                      <Minimize2 className="size-4" />
+                    ) : (
+                      <Maximize2 className="size-4" />
+                    )}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="left" className="text-xs">
+                  {isPreviewFullscreen
+                    ? "Exit fullscreen (or press Esc)"
+                    : "View funnel fullscreen"}
+                </TooltipContent>
+              </Tooltip>
               <iframe
                 ref={iframeRef}
                 key={previewKey}
                 title="live-funnel-preview"
-                className="h-[82vh] w-full rounded-lg border border-border/60 bg-white shadow-inner dark:bg-zinc-900"
+                className={cn(
+                  "w-full border border-border/60 bg-white shadow-inner dark:bg-zinc-900",
+                  isPreviewFullscreen
+                    ? "min-h-0 flex-1 basis-0 rounded-none border-0 shadow-none"
+                    : "h-[82vh] rounded-lg",
+                )}
                 sandbox="allow-same-origin allow-scripts"
                 allow="autoplay; fullscreen"
                 srcDoc={preview}
@@ -1214,13 +1533,15 @@ export function CopyInjectionOutputSide({
                     <Button
                       type="button"
                       disabled={
-                        regeneratingId === mediaModalId ||
+                        (regeneratingId != null &&
+                          regeneratingId === mediaModalId) ||
                         !mediaComment.trim() ||
                         !selectedProjectId
                       }
                       onClick={() => void handleRegenerateMedia()}
                     >
-                      {regeneratingId === mediaModalId ? (
+                      {regeneratingId != null &&
+                      regeneratingId === mediaModalId ? (
                         <Loader2 className="size-4 animate-spin" />
                       ) : (
                         <Film className="size-4" />
@@ -1254,7 +1575,14 @@ export function CopyInjectionOutputSide({
 
         <Dialog
           open={Boolean(sectionModalId)}
-          onOpenChange={(o) => !o && setSectionModalId(null)}
+          onOpenChange={(o) => {
+            if (!o) {
+              setSectionModalId(null);
+              setSectionModalTab("manual");
+              setSectionAiPrompt("");
+              setSectionAiLoading(false);
+            }
+          }}
         >
           <DialogContent className="max-h-[min(90vh,880px)] max-w-4xl overflow-y-auto border-border/80 bg-gradient-to-b from-card to-muted/20 shadow-2xl sm:max-w-4xl">
             <DialogHeader className="space-y-1 border-b border-border/60 pb-3">
@@ -1271,6 +1599,35 @@ export function CopyInjectionOutputSide({
               </div>
             </DialogHeader>
 
+            <div className="mb-4 flex gap-1 rounded-lg border border-border/50 bg-muted/30 p-1">
+              <Button
+                type="button"
+                variant={sectionModalTab === "manual" ? "default" : "ghost"}
+                size="sm"
+                className="flex-1 gap-1.5"
+                onClick={() => setSectionModalTab("manual")}
+              >
+                <Pencil className="size-3.5" />
+                Manual edit
+              </Button>
+              <Button
+                type="button"
+                variant={sectionModalTab === "ai" ? "default" : "ghost"}
+                size="sm"
+                className="flex-1 gap-1.5"
+                onClick={() => setSectionModalTab("ai")}
+              >
+                <Sparkles className="size-3.5" />
+                Edit with AI
+              </Button>
+            </div>
+
+            <div
+              className={cn(
+                sectionModalTab !== "manual" && "hidden",
+              )}
+              aria-hidden={sectionModalTab !== "manual"}
+            >
             <div className="rounded-xl border border-border/60 bg-muted/30 p-1.5 shadow-inner">
               <div className="flex flex-wrap items-center gap-0.5">
                 <ToolbarIcon
@@ -1506,16 +1863,67 @@ export function CopyInjectionOutputSide({
                   !pendingInlineImageId ||
                   !inlineImagePrompt.trim() ||
                   !selectedProjectId ||
-                  regeneratingId === pendingInlineImageId
+                  (regeneratingId != null &&
+                    regeneratingId === pendingInlineImageId)
                 }
                 onClick={() => void handleGenerateInlineImage()}
               >
-                {regeneratingId === pendingInlineImageId ? (
+                {regeneratingId != null &&
+                regeneratingId === pendingInlineImageId ? (
                   <Loader2 className="size-4 animate-spin" />
                 ) : (
                   <Sparkles className="size-4" />
                 )}
                 Generate image
+              </Button>
+            </div>
+            </div>
+
+            <div
+              className={cn(
+                "space-y-4",
+                sectionModalTab !== "ai" && "hidden",
+              )}
+              aria-hidden={sectionModalTab !== "ai"}
+            >
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                Preview uses the same styles as the live funnel but only this section
+                stays visible (other blocks are hidden) so alignment matches the real
+                page. Describe changes for this block — copy, layout, styling, or
+                sub-parts (headline, body, CTA, images).
+              </p>
+              <div className="overflow-hidden rounded-xl border border-border/60 bg-muted/20 shadow-inner">
+                <iframe
+                  key={`ai-section-preview-${sectionModalId}-${previewKey}`}
+                  title="Section preview for AI edit"
+                  className="h-[min(42vh,380px)] w-full border-0 bg-white dark:bg-zinc-950"
+                  sandbox="allow-same-origin allow-scripts"
+                  srcDoc={getSectionAiPreviewSrcDoc()}
+                />
+              </div>
+              <textarea
+                className="min-h-[100px] w-full rounded-lg border border-input bg-background px-3 py-2 text-sm"
+                placeholder="e.g. Shorten the headline; add two bullet benefits under the first paragraph; make the CTA button text more urgent…"
+                value={sectionAiPrompt}
+                onChange={(e) => setSectionAiPrompt(e.target.value)}
+                disabled={sectionAiLoading}
+              />
+              <Button
+                type="button"
+                className="gap-2"
+                disabled={
+                  sectionAiLoading ||
+                  !selectedProjectId ||
+                  sectionAiPrompt.trim().length < 4
+                }
+                onClick={() => void handleSectionAiEdit()}
+              >
+                {sectionAiLoading ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Sparkles className="size-4" />
+                )}
+                Apply with AI
               </Button>
             </div>
 
@@ -1537,6 +1945,10 @@ export function CopyInjectionOutputSide({
             if (!o) {
               setInsertStep("pick");
               setSelectedPresetId(null);
+              setInsertMode("section");
+              setInsertSheetTab("sections");
+              setSelectedComponentKind(null);
+              setComponentFields(defaultUserComponentFields());
               if (insertProductFileRef.current) {
                 insertProductFileRef.current.value = "";
               }
@@ -1553,59 +1965,118 @@ export function CopyInjectionOutputSide({
                 <SheetHeader className="border-b border-border/60 bg-gradient-to-br from-primary/10 via-transparent to-transparent p-5 text-left">
                   <SheetTitle className="flex items-center gap-2 text-lg">
                     <Layers className="size-5 text-primary" />
-                    Add a section
+                    Add to funnel
                   </SheetTitle>
                   <SheetDescription className="text-left text-xs">
-                    Each card shows a layout sketch—your real page still follows
-                    the template. Pick one, then refine the instruction.
+                    Full sections use AI to match your template. Components insert
+                    simple blocks you customize—HTML is updated immediately; base
+                    styles append to your CSS once.
                   </SheetDescription>
+                  <div className="mt-4 flex gap-2 rounded-lg border border-border/60 bg-muted/30 p-1">
+                    <button
+                      type="button"
+                      className={cn(
+                        "flex-1 rounded-md px-3 py-2 text-sm font-medium transition",
+                        insertSheetTab === "sections"
+                          ? "bg-background text-foreground shadow-sm"
+                          : "text-muted-foreground hover:text-foreground",
+                      )}
+                      onClick={() => setInsertSheetTab("sections")}
+                    >
+                      Sections
+                    </button>
+                    <button
+                      type="button"
+                      className={cn(
+                        "flex-1 rounded-md px-3 py-2 text-sm font-medium transition",
+                        insertSheetTab === "components"
+                          ? "bg-background text-foreground shadow-sm"
+                          : "text-muted-foreground hover:text-foreground",
+                      )}
+                      onClick={() => setInsertSheetTab("components")}
+                    >
+                      Components
+                    </button>
+                  </div>
                 </SheetHeader>
                 <div className="flex-1 overflow-y-auto p-4">
-                  <div className="grid gap-3">
-                    {SECTION_PRESETS.map((preset) => (
-                      <button
-                        key={preset.id}
-                        type="button"
-                        className={cn(
-                          "group flex w-full flex-col gap-3 rounded-2xl border border-border/60 bg-card p-3 text-left transition sm:p-4",
-                          "hover:border-sky-400/45 hover:shadow-md dark:hover:border-sky-500/35",
-                        )}
-                        onClick={() => pickPreset(preset)}
-                      >
-                        <div
+                  {insertSheetTab === "sections" ? (
+                    <div className="grid gap-3">
+                      {SECTION_PRESETS.map((preset) => (
+                        <button
+                          key={preset.id}
+                          type="button"
                           className={cn(
-                            "relative overflow-hidden rounded-xl border border-border/50 bg-muted/25 px-3 py-3 ring-1 ring-black/[0.03] dark:ring-white/8",
-                            "min-h-[7.25rem]",
+                            "group flex w-full flex-col gap-3 rounded-2xl border border-border/60 bg-card p-3 text-left transition sm:p-4",
+                            "hover:border-sky-400/45 hover:shadow-md dark:hover:border-sky-500/35",
                           )}
-                          aria-hidden
+                          onClick={() => pickPreset(preset)}
                         >
-                          <p className="mb-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                            Layout preview
-                          </p>
-                          <SectionLayoutSkeleton presetId={preset.id} />
-                        </div>
-                        <div className="flex items-start gap-3">
+                          <div
+                            className={cn(
+                              "relative overflow-hidden rounded-xl border border-border/50 bg-muted/25 px-3 py-3 ring-1 ring-black/[0.03] dark:ring-white/8",
+                              "min-h-[7.25rem]",
+                            )}
+                            aria-hidden
+                          >
+                            <p className="mb-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                              Layout preview
+                            </p>
+                            <SectionLayoutSkeleton presetId={preset.id} />
+                          </div>
+                          <div className="flex items-start gap-3">
+                            <div
+                              className={cn(
+                                "flex size-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br shadow-inner sm:size-12",
+                                preset.accent,
+                              )}
+                            >
+                              <preset.icon className="size-5 text-foreground/90 sm:size-6" />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="font-semibold leading-tight">
+                                {preset.title}
+                              </p>
+                              <p className="mt-0.5 text-xs text-muted-foreground">
+                                {preset.subtitle}
+                              </p>
+                            </div>
+                            <ChevronRight className="mt-1 size-5 shrink-0 text-muted-foreground opacity-60 transition group-hover:opacity-100" />
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="grid gap-3">
+                      {COMPONENT_PRESETS.map((c) => (
+                        <button
+                          key={c.kind}
+                          type="button"
+                          className={cn(
+                            "group flex w-full items-center gap-3 rounded-2xl border border-border/60 bg-card p-3 text-left transition sm:p-4",
+                            "hover:border-emerald-400/45 hover:shadow-md dark:hover:border-emerald-500/35",
+                          )}
+                          onClick={() => pickComponentKind(c.kind)}
+                        >
                           <div
                             className={cn(
                               "flex size-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br shadow-inner sm:size-12",
-                              preset.accent,
+                              c.accent,
                             )}
                           >
-                            <preset.icon className="size-5 text-foreground/90 sm:size-6" />
+                            <c.icon className="size-5 text-foreground/90 sm:size-6" />
                           </div>
                           <div className="min-w-0 flex-1">
-                            <p className="font-semibold leading-tight">
-                              {preset.title}
-                            </p>
+                            <p className="font-semibold leading-tight">{c.title}</p>
                             <p className="mt-0.5 text-xs text-muted-foreground">
-                              {preset.subtitle}
+                              {c.subtitle}
                             </p>
                           </div>
-                          <ChevronRight className="mt-1 size-5 shrink-0 text-muted-foreground opacity-60 transition group-hover:opacity-100" />
-                        </div>
-                      </button>
-                    ))}
-                  </div>
+                          <ChevronRight className="size-5 shrink-0 text-muted-foreground opacity-60 transition group-hover:opacity-100" />
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </>
             ) : (
@@ -1616,21 +2087,29 @@ export function CopyInjectionOutputSide({
                     variant="ghost"
                     size="sm"
                     className="mb-3 gap-1.5 -ml-2 text-muted-foreground"
-                    onClick={() => setInsertStep("pick")}
+                    onClick={() => {
+                      setInsertStep("pick");
+                      if (insertMode === "component") {
+                        setInsertSheetTab("components");
+                      } else {
+                        setInsertSheetTab("sections");
+                      }
+                    }}
                   >
                     <ArrowLeft className="size-4" />
-                    Back to layouts
+                    {insertMode === "component" ? "Back to components" : "Back to layouts"}
                   </Button>
                   <SheetTitle className="text-left text-base">
-                    {SECTION_PRESETS.find((p) => p.id === selectedPresetId)
-                      ?.title ?? "Custom"}{" "}
-                    section
+                    {insertMode === "component"
+                      ? `Add ${COMPONENT_PRESETS.find((c) => c.kind === selectedComponentKind)?.title ?? "component"}`
+                      : `${SECTION_PRESETS.find((p) => p.id === selectedPresetId)?.title ?? "Custom"} section`}
                   </SheetTitle>
                   <SheetDescription className="text-left text-xs">
-                    Insert after the section you choose. The AI matches your
-                    template scaffold.
+                    {insertMode === "component"
+                      ? "Customize the fields below. The block is inserted into your HTML; shared component styles are appended to your CSS once (you can edit both in the code tabs)."
+                      : "Insert after the section you choose. The AI matches your template scaffold."}
                   </SheetDescription>
-                  {selectedPresetId ? (
+                  {insertMode === "section" && selectedPresetId ? (
                     <div className="mt-3 rounded-xl border border-border/50 bg-muted/20 p-3">
                       <p className="mb-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
                         Layout you selected
@@ -1664,6 +2143,7 @@ export function CopyInjectionOutputSide({
                       )}
                     </select>
                   </div>
+                  {insertMode === "section" ? (
                   <div className="space-y-1.5">
                     <label className="text-xs font-medium text-muted-foreground">
                       Instruction for AI (min 8 chars)
@@ -1675,6 +2155,629 @@ export function CopyInjectionOutputSide({
                       onChange={(e) => setInsertPrompt(e.target.value)}
                     />
                   </div>
+                  ) : (
+                  <div className="space-y-4">
+                    {selectedComponentKind === "heading" ? (
+                      <>
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-medium text-muted-foreground">
+                            Heading level
+                          </label>
+                          <select
+                            className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                            value={componentFields.headingLevel}
+                            onChange={(e) =>
+                              setComponentFields((f) => ({
+                                ...f,
+                                headingLevel: e.target.value as UserComponentFields["headingLevel"],
+                              }))
+                            }
+                          >
+                            <option value="h2">Heading 2</option>
+                            <option value="h3">Heading 3</option>
+                            <option value="h4">Heading 4</option>
+                          </select>
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-medium text-muted-foreground">
+                            Text
+                          </label>
+                          <input
+                            type="text"
+                            className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                            value={componentFields.headingText}
+                            onChange={(e) =>
+                              setComponentFields((f) => ({
+                                ...f,
+                                headingText: e.target.value,
+                              }))
+                            }
+                          />
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-1.5">
+                            <label className="text-xs font-medium text-muted-foreground">
+                              Size
+                            </label>
+                            <select
+                              className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                              value={componentFields.headingFontSize}
+                              onChange={(e) =>
+                                setComponentFields((f) => ({
+                                  ...f,
+                                  headingFontSize: e.target
+                                    .value as UserComponentFields["headingFontSize"],
+                                }))
+                              }
+                            >
+                              <option value="sm">Small</option>
+                              <option value="md">Medium</option>
+                              <option value="lg">Large</option>
+                              <option value="xl">XL</option>
+                              <option value="2xl">2XL</option>
+                              <option value="3xl">3XL</option>
+                            </select>
+                          </div>
+                          <div className="space-y-1.5">
+                            <label className="text-xs font-medium text-muted-foreground">
+                              Weight
+                            </label>
+                            <select
+                              className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                              value={componentFields.headingFontWeight}
+                              onChange={(e) =>
+                                setComponentFields((f) => ({
+                                  ...f,
+                                  headingFontWeight: e.target
+                                    .value as UserComponentFields["headingFontWeight"],
+                                }))
+                              }
+                            >
+                              <option value="normal">Normal</option>
+                              <option value="medium">Medium</option>
+                              <option value="semibold">Semibold</option>
+                              <option value="bold">Bold</option>
+                            </select>
+                          </div>
+                        </div>
+                      </>
+                    ) : null}
+                    {selectedComponentKind === "paragraph" ? (
+                      <div className="space-y-3">
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-medium text-muted-foreground">
+                            Paragraph
+                          </label>
+                          <textarea
+                            className="min-h-[120px] w-full rounded-lg border border-input bg-background px-3 py-2.5 text-sm"
+                            placeholder="Your paragraph…"
+                            value={componentFields.paragraphText}
+                            onChange={(e) =>
+                              setComponentFields((f) => ({
+                                ...f,
+                                paragraphText: e.target.value,
+                              }))
+                            }
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-medium text-muted-foreground">
+                            Text size
+                          </label>
+                          <select
+                            className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                            value={componentFields.paragraphFontSize}
+                            onChange={(e) =>
+                              setComponentFields((f) => ({
+                                ...f,
+                                paragraphFontSize: e.target
+                                  .value as UserComponentFields["paragraphFontSize"],
+                              }))
+                            }
+                          >
+                            <option value="sm">Small</option>
+                            <option value="base">Body</option>
+                            <option value="md">Medium</option>
+                            <option value="lg">Large</option>
+                          </select>
+                        </div>
+                      </div>
+                    ) : null}
+                    {selectedComponentKind === "link" ? (
+                      <>
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-medium text-muted-foreground">
+                            Link text
+                          </label>
+                          <input
+                            type="text"
+                            className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                            value={componentFields.linkText}
+                            onChange={(e) =>
+                              setComponentFields((f) => ({
+                                ...f,
+                                linkText: e.target.value,
+                              }))
+                            }
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-medium text-muted-foreground">
+                            URL
+                          </label>
+                          <input
+                            type="url"
+                            className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                            placeholder="https://"
+                            value={componentFields.linkHref}
+                            onChange={(e) =>
+                              setComponentFields((f) => ({
+                                ...f,
+                                linkHref: e.target.value,
+                              }))
+                            }
+                          />
+                        </div>
+                        <label className="flex cursor-pointer items-center gap-2 text-xs">
+                          <input
+                            type="checkbox"
+                            className="size-4 rounded border-input"
+                            checked={componentFields.linkNewTab}
+                            onChange={(e) =>
+                              setComponentFields((f) => ({
+                                ...f,
+                                linkNewTab: e.target.checked,
+                              }))
+                            }
+                          />
+                          Open in new tab
+                        </label>
+                        <label className="flex cursor-pointer items-center gap-2 text-xs">
+                          <input
+                            type="checkbox"
+                            className="size-4 rounded border-input"
+                            checked={componentFields.linkUnderline}
+                            onChange={(e) =>
+                              setComponentFields((f) => ({
+                                ...f,
+                                linkUnderline: e.target.checked,
+                              }))
+                            }
+                          />
+                          Underline link
+                        </label>
+                      </>
+                    ) : null}
+                    {selectedComponentKind === "image" ? (
+                      <>
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-medium text-muted-foreground">
+                            Image
+                          </label>
+                          <p className="text-[11px] leading-snug text-muted-foreground">
+                            Paste a public image URL, or upload a file from your
+                            device. Uploads are embedded in the HTML (best for
+                            smaller images; use a URL for very large files).
+                          </p>
+                          <input
+                            type="url"
+                            className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                            placeholder="https://…"
+                            value={
+                              componentFields.imageSrc.startsWith("data:")
+                                ? ""
+                                : componentFields.imageSrc
+                            }
+                            onChange={(e) => {
+                              if (componentImageFileRef.current) {
+                                componentImageFileRef.current.value = "";
+                              }
+                              setComponentFields((f) => ({
+                                ...f,
+                                imageSrc: e.target.value,
+                              }));
+                            }}
+                          />
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <input
+                            ref={componentImageFileRef}
+                            type="file"
+                            accept="image/*"
+                            className="sr-only"
+                            aria-label="Upload image file"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (!file) return;
+                              const maxBytes = 5 * 1024 * 1024;
+                              if (file.size > maxBytes) {
+                                onStatus(
+                                  "Image is too large. Use a file under 5 MB or paste a URL.",
+                                );
+                                e.target.value = "";
+                                return;
+                              }
+                              const r = new FileReader();
+                              r.onload = () => {
+                                const dataUrl = r.result as string;
+                                setComponentFields((f) => ({
+                                  ...f,
+                                  imageSrc: dataUrl,
+                                  imageAlt: f.imageAlt.trim()
+                                    ? f.imageAlt
+                                    : file.name
+                                        .replace(/\.[^.]+$/, "")
+                                        .replace(/[-_]+/g, " ")
+                                        .trim(),
+                                }));
+                              };
+                              r.readAsDataURL(file);
+                            }}
+                          />
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            className="gap-1.5"
+                            onClick={() =>
+                              componentImageFileRef.current?.click()
+                            }
+                          >
+                            <Upload className="size-3.5" />
+                            Upload image
+                          </Button>
+                          {componentFields.imageSrc.startsWith("data:") ? (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="text-xs"
+                              onClick={() => {
+                                setComponentFields((f) => ({
+                                  ...f,
+                                  imageSrc: "",
+                                }));
+                                if (componentImageFileRef.current) {
+                                  componentImageFileRef.current.value = "";
+                                }
+                              }}
+                            >
+                              Clear upload
+                            </Button>
+                          ) : null}
+                        </div>
+                        {componentFields.imageSrc.trim() ? (
+                          <div className="overflow-hidden rounded-xl border border-border/60 bg-muted/20 p-2">
+                            <div className="flex gap-3">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={componentFields.imageSrc}
+                                alt=""
+                                className="h-24 max-w-[45%] shrink-0 rounded-lg object-contain"
+                              />
+                              <p className="flex min-w-0 flex-1 items-center text-[11px] leading-snug text-muted-foreground">
+                                {componentFields.imageSrc.startsWith("data:")
+                                  ? "Uploaded image will be embedded in your funnel HTML."
+                                  : "Preview from URL."}
+                              </p>
+                            </div>
+                          </div>
+                        ) : null}
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-medium text-muted-foreground">
+                            Alt text
+                          </label>
+                          <input
+                            type="text"
+                            className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                            value={componentFields.imageAlt}
+                            onChange={(e) =>
+                              setComponentFields((f) => ({
+                                ...f,
+                                imageAlt: e.target.value,
+                              }))
+                            }
+                          />
+                        </div>
+                      </>
+                    ) : null}
+                    {selectedComponentKind === "divider" ? (
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-medium text-muted-foreground">
+                          Line color
+                        </label>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <input
+                            type="color"
+                            className="h-10 w-14 cursor-pointer rounded border border-input bg-background p-1"
+                            value={
+                              componentFields.style.dividerColor || "#cccccc"
+                            }
+                            onChange={(e) =>
+                              setComponentFields((f) => ({
+                                ...f,
+                                style: {
+                                  ...f.style,
+                                  dividerColor: e.target.value,
+                                },
+                              }))
+                            }
+                          />
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="text-xs"
+                            onClick={() =>
+                              setComponentFields((f) => ({
+                                ...f,
+                                style: { ...f.style, dividerColor: "" },
+                              }))
+                            }
+                          >
+                            Default line
+                          </Button>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    <div className="space-y-3 rounded-xl border border-dashed border-primary/25 bg-primary/5 p-3">
+                      <p className="text-xs font-semibold text-foreground">
+                        Block appearance
+                      </p>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1.5">
+                          <label className="text-[11px] text-muted-foreground">
+                            Padding
+                          </label>
+                          <select
+                            className="h-9 w-full rounded-md border border-input bg-background px-2 text-xs"
+                            value={componentFields.style.padding}
+                            onChange={(e) =>
+                              setComponentFields((f) => ({
+                                ...f,
+                                style: {
+                                  ...f.style,
+                                  padding: e.target.value as SpacingToken,
+                                },
+                              }))
+                            }
+                          >
+                            <option value="none">None</option>
+                            <option value="xs">XS</option>
+                            <option value="sm">S</option>
+                            <option value="md">M</option>
+                            <option value="lg">L</option>
+                            <option value="xl">XL</option>
+                          </select>
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className="text-[11px] text-muted-foreground">
+                            Vertical margin
+                          </label>
+                          <select
+                            className="h-9 w-full rounded-md border border-input bg-background px-2 text-xs"
+                            value={componentFields.style.marginY}
+                            onChange={(e) =>
+                              setComponentFields((f) => ({
+                                ...f,
+                                style: {
+                                  ...f.style,
+                                  marginY: e.target.value as SpacingToken,
+                                },
+                              }))
+                            }
+                          >
+                            <option value="none">None</option>
+                            <option value="xs">XS</option>
+                            <option value="sm">S</option>
+                            <option value="md">M</option>
+                            <option value="lg">L</option>
+                            <option value="xl">XL</option>
+                          </select>
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className="text-[11px] text-muted-foreground">
+                            Rounded corners
+                          </label>
+                          <select
+                            className="h-9 w-full rounded-md border border-input bg-background px-2 text-xs"
+                            value={componentFields.style.borderRadius}
+                            onChange={(e) =>
+                              setComponentFields((f) => ({
+                                ...f,
+                                style: {
+                                  ...f.style,
+                                  borderRadius: e.target.value as RadiusToken,
+                                },
+                              }))
+                            }
+                          >
+                            <option value="none">None</option>
+                            <option value="sm">S</option>
+                            <option value="md">M</option>
+                            <option value="lg">L</option>
+                            <option value="full">Pill</option>
+                          </select>
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className="text-[11px] text-muted-foreground">
+                            Shadow
+                          </label>
+                          <select
+                            className="h-9 w-full rounded-md border border-input bg-background px-2 text-xs"
+                            value={componentFields.style.shadow}
+                            onChange={(e) =>
+                              setComponentFields((f) => ({
+                                ...f,
+                                style: {
+                                  ...f.style,
+                                  shadow: e.target.value as ShadowToken,
+                                },
+                              }))
+                            }
+                          >
+                            <option value="none">None</option>
+                            <option value="sm">Soft</option>
+                            <option value="md">Medium</option>
+                            <option value="lg">Strong</option>
+                            <option value="xl">Dramatic</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <div className="space-y-1.5">
+                          <label className="text-[11px] text-muted-foreground">
+                            Text color
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="color"
+                              className="h-9 w-12 cursor-pointer rounded border border-input p-0.5"
+                              value={
+                                componentFields.style.textColor || "#171717"
+                              }
+                              onChange={(e) =>
+                                setComponentFields((f) => ({
+                                  ...f,
+                                  style: {
+                                    ...f.style,
+                                    textColor: e.target.value,
+                                  },
+                                }))
+                              }
+                            />
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-8 text-xs"
+                              onClick={() =>
+                                setComponentFields((f) => ({
+                                  ...f,
+                                  style: { ...f.style, textColor: "" },
+                                }))
+                              }
+                            >
+                              Inherit
+                            </Button>
+                          </div>
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className="text-[11px] text-muted-foreground">
+                            Background
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="color"
+                              className="h-9 w-12 cursor-pointer rounded border border-input p-0.5"
+                              value={
+                                componentFields.style.backgroundColor ||
+                                "#ffffff"
+                              }
+                              onChange={(e) =>
+                                setComponentFields((f) => ({
+                                  ...f,
+                                  style: {
+                                    ...f.style,
+                                    backgroundColor: e.target.value,
+                                  },
+                                }))
+                              }
+                            />
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-8 text-xs"
+                              onClick={() =>
+                                setComponentFields((f) => ({
+                                  ...f,
+                                  style: {
+                                    ...f.style,
+                                    backgroundColor: "",
+                                  },
+                                }))
+                              }
+                            >
+                              Clear
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1.5">
+                          <label className="text-[11px] text-muted-foreground">
+                            Border
+                          </label>
+                          <select
+                            className="h-9 w-full rounded-md border border-input bg-background px-2 text-xs"
+                            value={componentFields.style.borderWidth}
+                            onChange={(e) =>
+                              setComponentFields((f) => ({
+                                ...f,
+                                style: {
+                                  ...f.style,
+                                  borderWidth: e.target.value as
+                                    | "none"
+                                    | "thin"
+                                    | "medium",
+                                },
+                              }))
+                            }
+                          >
+                            <option value="none">None</option>
+                            <option value="thin">Thin</option>
+                            <option value="medium">Medium</option>
+                          </select>
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className="text-[11px] text-muted-foreground">
+                            Border color
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="color"
+                              className="h-9 w-12 cursor-pointer rounded border border-input p-0.5"
+                              value={
+                                componentFields.style.borderColor || "#e5e5e5"
+                              }
+                              onChange={(e) =>
+                                setComponentFields((f) => ({
+                                  ...f,
+                                  style: {
+                                    ...f.style,
+                                    borderColor: e.target.value,
+                                  },
+                                }))
+                              }
+                            />
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-8 px-1.5 text-xs"
+                              onClick={() =>
+                                setComponentFields((f) => ({
+                                  ...f,
+                                  style: { ...f.style, borderColor: "" },
+                                }))
+                              }
+                            >
+                              Clear
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                      <p className="text-[10px] leading-snug text-muted-foreground">
+                        Styles are saved as inline CSS on this block so they work
+                        in preview and exports. Edit the HTML/CSS tabs anytime.
+                      </p>
+                    </div>
+                  </div>
+                  )}
+                  {insertMode === "section" ? (
+                    <>
                   <div className="space-y-2">
                     <label className="text-xs font-medium text-muted-foreground">
                       Product reference (optional)
@@ -1798,6 +2901,22 @@ export function CopyInjectionOutputSide({
                     )}
                     Generate & insert
                   </Button>
+                    </>
+                  ) : (
+                    <Button
+                      type="button"
+                      className="gap-2"
+                      disabled={
+                        !insertAfterId ||
+                        !selectedProjectId ||
+                        !selectedComponentKind
+                      }
+                      onClick={() => handleInsertComponent()}
+                    >
+                      <Plus className="size-4" />
+                      Add to page
+                    </Button>
+                  )}
                 </div>
               </>
             )}

@@ -1195,6 +1195,7 @@ export function CopyInjectionProjectEditor({
       <CopyInjectionOutputSide
         htmlDraft={htmlDraft}
         cssDraft={cssDraft}
+        onCssDraftChange={setCssDraft}
         imagesDraft={imagesDraft}
         previewKey={previewKey}
         selectedProjectId={selectedProjectId}

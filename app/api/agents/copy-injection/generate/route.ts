@@ -147,7 +147,7 @@ async function runGeneration(
   const templateScaffoldForPlan = (template?.html_scaffold ?? "").trim();
   const templateStructureHint =
     templateScaffoldForPlan.length > 0
-      ? `\n**Template HTML scaffold (reference—align section types with these blocks; if copy needs more sections than the scaffold shows, repeat the matching pattern; if fewer, skip unused block types):**\n\`\`\`html\n${templateScaffoldForPlan.length > 2200 ? `${templateScaffoldForPlan.slice(0, 2200)}\n<!-- truncated -->` : templateScaffoldForPlan}\n\`\`\`\n`
+      ? `\n**Template HTML scaffold (reference—align section types with these blocks; if copy needs more sections than the scaffold shows, repeat the matching pattern; if fewer, skip unused block types):**\n\`\`\`html\n${templateScaffoldForPlan.length > 4000 ? `${templateScaffoldForPlan.slice(0, 4000)}\n<!-- truncated -->` : templateScaffoldForPlan}\n\`\`\`\n`
       : "";
 
   const sectionPlanResult = await generateObject({
@@ -164,6 +164,8 @@ Produce a section plan that maps the copy into funnel sections. **CRITICAL:** Yo
 **PARAGRAPH MAPPING (MANDATORY):** The copy is split into ${paragraphs.length} paragraphs (0-indexed). For each section, output paragraphIndices: an array of paragraph numbers. EVERY paragraph 0 through ${Math.max(0, paragraphs.length - 1)} MUST be assigned to exactly one section. No paragraph may be skipped. Paragraph 0 is usually the headline. Assign in reading order.
 
 **TEMPLATE 100%:** Follow the selected template's structure exactly—same section types, class names, layout. The template defines the visual style.
+
+**SECTION ↔ TEMPLATE BLOCK (MANDATORY):** For every section you output, mentally map its **type** to the **matching block** in the template scaffold (hero block → headline/hook; narrative → body block; reviews → testimonial block; Q&A → faq block; **prices, package, bonuses, shipping, urgency, main purchase → cta block** including any countdown/timer region). Do not assign pricing/offer/timer copy to **body**—use **cta** so the HTML generator can clone the template's pricing UI. One wrong type assignment breaks layout fidelity for that section.
 
 Funnel name: ${parsedData.funnelName}
 Campaign context: ${parsedData.campaignContext ?? "N/A"}
@@ -183,6 +185,8 @@ For each section output:
 - preferGif: true for process/mechanism; false for testimonials, FAQs
 
 **TESTIMONIALS - ONE SECTION PER REVIEWER (CRITICAL):** Each individual review/testimonial from a DIFFERENT person MUST be its own section with type "testimonial". Example: 5 reviews from Sarah, Mike, Lisa, John, Emma = 5 sections: testimonial-1, testimonial-2, testimonial-3, testimonial-4, testimonial-5. NEVER put multiple reviews in one section. Each testimonial section gets its own image slot.
+
+**PRICING / OFFER / PACKAGE COPY (CRITICAL):** If the template scaffold shows a designed pricing, offer, bonus stack, countdown, or "secure order" block (rows with prices, checkmarks, buttons, timers), and the user's copy includes prices, discounts, package contents, shipping, or the main purchase CTA, you MUST assign those paragraphs to section type **"cta"** (not "body"). Use **"body"** only for narrative paragraphs. Multiple pricing-related paragraphs can share one **cta** section if they belong to the same offer, or split if the template implies separate blocks. This ensures the HTML step reuses the template's pricing UI instead of plain paragraphs.
 
 Create enough sections so all ${paragraphs.length} paragraphs are assigned. Follow template structure.`,
   });
@@ -462,9 +466,24 @@ IDs in order of appearance: ${placeholderIdList}
 **TEMPLATE REPLICATION (MANDATORY—the page must match the selected template):**
 1. STRUCTURE: Mirror the template scaffold's HTML EXACTLY—same element hierarchy, nesting, and **the same class strings the template uses** on each kind of block (hero, body, testimonial, pricing/offer, FAQ, etc.). Do not substitute a generic "one layout for all sections" when the template uses different patterns per type.
 2. CLASS NAMES + TAG CHOICES: Use the template's classes verbatim. Also reuse the **same heading/body tag patterns** the scaffold uses (e.g. if the hero uses \`<p class="…">\` or \`<div class="title">\`, do not swap in a different \`<h1>\` style that changes the design). Map each plan section to the scaffold block that matches its **role**; duplicate that block's markup for extra sections of the same type.
-3. COPY LENGTH: **Longer copy** → repeat the template's section pattern more times, or add paragraphs **inside** the same wrapper elements the template uses—never switch to a generic layout or blow up font sizes. **Shorter copy** → omit whole block types if needed; keep remaining blocks identical to the scaffold; do not enlarge type to "fill" the page.
-4. REQUIRED ATTRIBUTES (do not skip): On each section's root (\`<section>\` or outermost wrapper for that section), set \`id="<section id from plan>"\` and \`data-section-type="<type from plan>"\`. Add these on the same node that already carries the template's classes.
-5. VISUAL FIDELITY: The result should look like **the template file with the user's words dropped in**—same columns, widths, spacing rhythm, and **type scale** as the template. Only the text changes; not the layout system.
+3. PER-SECTION FIDELITY: **Every** output section must look like **one slice of the template**, not a generic landing block. Hero ≠ body ≠ testimonial ≠ FAQ ≠ offer—each uses its **own** scaffold subtree. Never reuse one generic wrapper for multiple section kinds when the template uses different patterns.
+4. COPY LENGTH: **Longer copy** → repeat the template's section pattern more times, or add paragraphs **inside** the same wrapper elements the template uses—never switch to a generic layout or blow up font sizes. **Shorter copy** → omit whole block types if needed; keep remaining blocks identical to the scaffold; do not enlarge type to "fill" the page.
+5. REQUIRED ATTRIBUTES (do not skip): On each section's root (\`<section>\` or outermost wrapper for that section), set \`id="<section id from plan>"\` and \`data-section-type="<type from plan>"\`. Add these on the same node that already carries the template's classes.
+6. VISUAL FIDELITY: The result should look like **the template file with the user's words dropped in**—same columns, widths, spacing rhythm, and **type scale** as the template. Only the text changes; not the layout system.
+7. DO NOT STRIP: Never remove decorative shells from the scaffold (bands, borders, icon placeholders, **timer/countdown wrappers**, grid columns, CTA button elements) to "simplify"—those create the design.
+`
+    : "";
+
+  const pricingOfferCtaFidelityBlock = hasTemplate
+    ? `
+**PRICING / OFFER / CTA — STRUCTURED UI (MANDATORY):**
+For every section with type **"cta"** (and any section whose content is mainly prices, package items, bonuses, shipping, savings, countdown/urgency, or the primary purchase action):
+
+1. **Find** the template scaffold's **offer / pricing / package / bonus** block—the one with structured rows (often checkmarks, strikethrough "regular" prices, highlighted totals, optional countdown/timer, large **KOSTENLOS/FREE** or total line, and a prominent **button** or CTA link.
+2. **Clone that block's full markup tree**—every wrapper \`<div>\`/ \`<section>\`, **all class names**, nested grids, \`<ul>\`/\`<li>\` or row \`<div>\`s, price spans, **timer/countdown container** (all nested elements the template uses for digits or labels), icon slots, and the **\`<button>\` or anchor CTA**. Put the plan's text into the **same element roles** the template uses (headline strip, each line item, fine print, button label). Do **not** flatten offer copy into unstructured \`<p>\` tags only.
+3. **COUNTDOWN / TIMER:** If the scaffold includes a timer region (any combination of \`<span>\`, \`<div>\`, \`data-*\` hooks, or classes for clock digits), **preserve that entire subtree** and its classes so CSS/layout matches the template. You may use placeholder digits (e.g. 00:50:03) or static text inside the same structure—**do not delete** the timer shell to save space. Real live countdown behavior may rely on the template's existing scripts; your job is the **visible structure** matching 100%.
+4. **Forbidden:** Outputting a \`<section id="…" data-section-type="cta">\` that contains only consecutive \`<p>\` paragraphs when the template shows a designed pricing UI. **Forbidden:** Omitting the template's button, list rows, or **timer** wrapper for offer content. **Forbidden:** Using a single generic article layout for pricing when the scaffold shows a distinct block.
+5. If the plan's copy has many short lines (items, bullets), map them into the template's **repeating row** pattern (duplicate \`<li>\` or row divs) instead of joining everything into one paragraph.
 `
     : "";
 
@@ -485,8 +504,12 @@ ${templateCssSnippetForHtml}
 `
       : "";
 
-  const sectionTypeDifferentiationBlock = `
-**SECTION TYPES MUST READ AS DIFFERENT BLOCKS:** Use the template's distinct patterns for offer/pricing (cta), reviews (testimonial), FAQ, and narrative (body)—do not flatten everything into one repeated generic section. \`data-section-type\` must match the plan (headline, hook, body, cta, testimonial, faq, image, proof) so pricing/reviews/FAQ are visually distinct when CSS is applied.
+  const sectionTypeDifferentiationBlock = hasTemplate
+    ? `
+**SECTION TYPES — DISTINCT TEMPLATE BLOCKS (MANDATORY):** Each \`data-section-type\` must use the **corresponding** subtree from the template scaffold: **headline/hook** → hero block; **body** → body/article block; **testimonial** → review/card block; **faq** → FAQ block; **cta** → **pricing/offer block** (with timer/button/rows if present)—never a generic copy of another block. Do not flatten all sections into one repeated layout. \`data-section-type\` must match the plan exactly so CSS and structure stay faithful.
+`
+    : `
+**SECTION TYPES MUST READ AS DIFFERENT BLOCKS:** Use distinct patterns for offer/pricing (cta), reviews (testimonial), FAQ, and narrative (body). \`data-section-type\` must match the plan (headline, hook, body, cta, testimonial, faq, image, proof).
 `;
 
   const heroFirstSectionBlock =
@@ -505,6 +528,7 @@ ${scaffoldHasPlaceholder ? "\n**Template scaffold:** The template uses {{content
 ${hasTemplate && !scaffoldHasPlaceholder ? "\n**Full-page template:** When the scaffold has no {{content}} placeholder, your HTML fragment is inserted inside the template document's <body>—you must still mirror the scaffold's inner section patterns exactly (do not replace with a generic layout).\n" : ""}
 ${imageSlotsBlock}
 ${templateReplicationBlock}
+${pricingOfferCtaFidelityBlock}
 ${sectionTypeDifferentiationBlock}
 ${heroFirstSectionBlock}
 ${typographyScaleHtmlBlock}
@@ -645,6 +669,17 @@ ${templateHtmlScaffold}
     return results;
   }
 
+  /** Stricter system message when a template exists—reinforces scaffold cloning in-model. */
+  const htmlGenerationSystem = hasTemplate
+    ? `${FUNNEL_GENERATION_EXTRA_SYSTEM_PROMPT}
+
+## Template mode (non-negotiable)
+- Your HTML must **structurally clone** the template scaffold for each section **role**. Same tags, depth, and **class** strings—not a minimal or generic alternative.
+- **cta** = full **pricing/offer** subtree from the scaffold: rows, prices, **timer/countdown wrappers**, button, strikethrough lines—text substitution only inside those elements.
+- **Every section type** maps to its own scaffold pattern (hero, body, testimonial, faq, cta are visually different blocks). Do not reuse one pattern for all.
+- Do not remove timer shells, CTA buttons, or layout wrappers to shorten output.`
+    : FUNNEL_GENERATION_EXTRA_SYSTEM_PROMPT;
+
   const HTML_CHUNK_THRESHOLD = 8;
   const HTML_CHUNK_SIZE = 6;
   const HTML_MAX_TOKENS = 65536;
@@ -672,15 +707,24 @@ ${templateHtmlScaffold}
       const batchCtaBlock = batchHasCta && ctaSectionIds.length > 0
         ? `\n**CTA IMAGES (REQUIRED):** Each CTA content includes an img tag—preserve it. IDs: ${batchCtaIds.join(", ")}.\n`
         : "";
+      const batchCtaStructureReminder =
+        batchHasCta && hasTemplate
+          ? `\n**CTA IN THIS CHUNK:** Reuse the template scaffold's **full** pricing/offer block (nested divs, list rows, button, timer if present)—do not output CTA copy as plain stacked \`<p>\` only.\n`
+          : "";
       const batchImageSlotsNote =
         mediaPlaceholders.length > 0 || batchHasTestimonials || batchHasCta
           ? `\n**IMAGE SLOTS (MANDATORY):** Include all image slots—replace [image]/[gif] with img tags, preserve testimonial and CTA img tags. Template structure is for styling only.\n`
           : "";
+      const batchTemplateChunkNote = hasTemplate
+        ? `\n**MULTI-CHUNK GENERATION:** The full template scaffold is below—even if this chunk only contains mid/late sections, each section must still match the **corresponding block pattern** from that scaffold (do not invent a simpler layout). **cta** sections here must still use the **complete** pricing/offer/timer/button subtree from the template.\n`
+        : "";
+
       const batchPrompt = `${copyContext}
 
 You are an expert HTML funnel builder. Output ONLY the HTML for these ${batch.length} sections (chunk ${b + 1} of ${batches.length}). No <html>, <head>, <body>. Just the section elements.
-
+${batchTemplateChunkNote}
 ${templateReplicationBlock}
+${pricingOfferCtaFidelityBlock}
 ${sectionTypeDifferentiationBlock}
 ${b === 0 ? heroFirstSectionBlock : ""}
 ${typographyScaleHtmlBlock}
@@ -690,6 +734,7 @@ ${batchImageSlotsNote}
 ${placeholderBlock}
 ${batchTestimonialBlock}
 ${batchCtaBlock}
+${batchCtaStructureReminder}
 **EXACT COPY:** Output the section content EXACTLY as provided. Preserve any <img src="{{image:SECTION_ID}}" ... /> tags and all <b>, <i>, <u> formatting in the content unchanged. No truncation, no omission.
 
 Template guidance: ${templateInstructions}
@@ -705,7 +750,7 @@ ${batchJson}`;
       const batchResult = await generateObject({
         model: gateway("openai/gpt-4.1"),
         schema: htmlOnlySchema,
-        system: FUNNEL_GENERATION_EXTRA_SYSTEM_PROMPT,
+        system: htmlGenerationSystem,
         prompt: batchPrompt,
         maxOutputTokens: HTML_MAX_TOKENS,
       });
@@ -717,7 +762,7 @@ ${batchJson}`;
     const htmlResult = await generateObject({
       model: gateway("openai/gpt-4.1"),
       schema: htmlOnlySchema,
-      system: FUNNEL_GENERATION_EXTRA_SYSTEM_PROMPT,
+      system: htmlGenerationSystem,
       prompt: htmlPrompt,
       maxOutputTokens: HTML_MAX_TOKENS,
     });

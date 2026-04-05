@@ -25,6 +25,8 @@ const editSchema = z.object({
   /** Optional: use latest draft from client instead of DB (ensures edits apply to unsaved changes). */
   currentHtml: z.string().optional(),
   currentCss: z.string().optional(),
+  /** When set, scopes HTML/CSS edits to this section id (element id in the funnel HTML). */
+  focusSectionId: z.string().min(1).optional(),
   /** When true, stream progress events for chain-of-thought display */
   stream: z.boolean().optional(),
 });
@@ -136,6 +138,12 @@ async function runEdit(
   const copyContext = agent1PromptContext([], "copy");
   const gateway = getGateway();
 
+  const focusSectionId = parsed.focusSectionId?.trim();
+  const effectiveEditComment =
+    focusSectionId && focusSectionId.length > 0
+      ? `[Target section id="${focusSectionId}": Apply changes ONLY within this section's HTML (the element with id="${focusSectionId}") and CSS rules scoped to this section. Do not modify other sections.]\n\n${parsed.editComment}`
+      : parsed.editComment;
+
   const existingImages = (funnel.latest_images ?? {}) as Record<string, string>;
   const idsFromHtml = [...workingHtml.matchAll(/\{\{image:([a-zA-Z0-9_-]+)\}\}/g)].map(
     (m) => m[1],
@@ -178,7 +186,7 @@ ${funnel.objective}
 ${sectionIdsNote}
 
 User edit request:
-${parsed.editComment}
+${effectiveEditComment}
 
 Return concise summary, htmlCssChangesNeeded, and imageEdits.
 - htmlCssChangesNeeded: set TRUE only if the user wants to change text, headlines, layout, styling, or HTML/CSS structure. Set FALSE when the request is ONLY about images (e.g. "change the hero image", "regenerate the picture under...", "make the image seem...") or when no edits are needed.
@@ -238,8 +246,9 @@ For each imageEdit:
     const { htmlExcerpt, cssExcerpt } = extractEditContext(
       workingHtml,
       workingCss,
-      parsed.editComment,
+      effectiveEditComment,
       editPlan.summary,
+      focusSectionId ? { focusSectionId } : undefined,
     );
 
       const excerptNote =
@@ -264,7 +273,7 @@ EDITING STRATEGY (CRITICAL):
 6. You MUST always return htmlEdits and cssEdits. Use empty arrays [] when no changes are needed.
 
 User request:
-${parsed.editComment}
+${effectiveEditComment}
 
 Edit summary:
 ${editPlan.summary}

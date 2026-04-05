@@ -3,6 +3,8 @@
  * Finds {{image:sectionId}} markers and extracts content around matching sections.
  */
 
+import { getSectionOuterHtml } from "@/lib/funnel-html-manipulate";
+
 const SECTION_WINDOW = 1200; // chars before/after each placeholder
 const MAX_TOTAL_HTML = 8000;  // max chars to send for HTML
 const MAX_TOTAL_CSS = 6000;   // max chars to send for CSS
@@ -108,13 +110,30 @@ export interface EditContext {
 /**
  * Produces a smaller HTML/CSS context for the targeted-edits LLM.
  * When we can identify relevant sections, sends only those excerpts.
+ * When `focusSectionId` is set, prefers that section's outer HTML only.
  */
 export function extractEditContext(
   html: string,
   css: string,
   editComment: string,
   editSummary: string,
+  options?: { focusSectionId?: string },
 ): EditContext {
+  if (options?.focusSectionId) {
+    const outer = getSectionOuterHtml(html, options.focusSectionId);
+    if (outer) {
+      const htmlExcerpt =
+        outer.length > MAX_TOTAL_HTML
+          ? outer.slice(0, MAX_TOTAL_HTML) + "\n\n/* …truncated… */"
+          : outer;
+      return {
+        htmlExcerpt,
+        cssExcerpt: truncateCss(css),
+        useFullDocument: false,
+      };
+    }
+  }
+
   const sectionIds = getSectionIds(html);
   const relevantIds = getRelevantSectionIds(sectionIds, editComment, editSummary);
 

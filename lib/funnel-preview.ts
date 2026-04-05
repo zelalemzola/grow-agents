@@ -123,3 +123,50 @@ export function createPreviewSrcDoc(
 
   return renderPreviewDocument(bodyContent, css + VIDEO_CSS);
 }
+
+/**
+ * Full-page CSS (same as live preview) for correct alignment, but only the
+ * element with `sectionId` stays visible: siblings are hidden up the DOM tree
+ * so the iframe shows that block alone—not the whole funnel scrolled.
+ */
+export function createSectionFocusedPreviewSrcDoc(
+  fullPageHtml: string,
+  css: string,
+  images: Record<string, string> | null | undefined,
+  sectionId: string,
+): string {
+  const srcDoc = createPreviewSrcDoc(fullPageHtml, css, images);
+  const safeId = JSON.stringify(sectionId);
+  const isolateScript = `
+<script>
+(function(){
+  function isolateSection(){
+    var id = ${safeId};
+    var el = document.getElementById(id);
+    if (!el) return;
+    var node = el;
+    while (node && node !== document.body) {
+      var parent = node.parentElement;
+      if (!parent) break;
+      for (var i = 0; i < parent.children.length; i++) {
+        var child = parent.children[i];
+        if (child !== node) {
+          child.style.setProperty("display", "none", "important");
+        }
+      }
+      node = parent;
+    }
+    try { window.scrollTo(0, 0); } catch (e) {}
+  }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", isolateSection);
+  } else {
+    isolateSection();
+  }
+})();
+</script>`;
+  if (/<\/body\s*>/i.test(srcDoc)) {
+    return srcDoc.replace(/<\/body\s*>/i, `${isolateScript}</body>`);
+  }
+  return srcDoc + isolateScript;
+}
