@@ -12,6 +12,7 @@ import {
   parseMediaPlaceholders,
   replacePlaceholdersInHtml,
   getPlaceholderContext,
+  extractImagePlaceholderIdsFromHtml,
 } from "@/lib/media-placeholders";
 import {
   formatSectionPlanContentForHtml,
@@ -27,6 +28,7 @@ import { IMAGE_GENERATION_GUIDELINE } from "@/lib/image-generation-guideline";
 import { uploadImagesMapToStorage } from "@/lib/funnel-image-storage";
 import { injectGeneratedContentIntoScaffold } from "@/lib/scaffold-inject";
 import { getGateway } from "@/lib/ai-gateway";
+import { getSupabaseServiceRoleKey } from "@/lib/supabase-config";
 import {
   createServerSupabaseClient,
   createSupabaseAdminClient,
@@ -78,6 +80,35 @@ type GenerationResult = {
     sectionPlan: Record<string, unknown>;
   };
 };
+
+function extractClassNames(html: string): Set<string> {
+  const out = new Set<string>();
+  const matches = html.matchAll(/\bclass=["']([^"']+)["']/gi);
+  for (const m of matches) {
+    for (const c of (m[1] ?? "").trim().split(/\s+/)) {
+      if (c) out.add(c);
+    }
+  }
+  return out;
+}
+
+function hasStructuredCtaBlock(html: string, ctaIds: string[]): boolean {
+  if (ctaIds.length === 0) return true;
+  for (const id of ctaIds) {
+    const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp(
+      `<(?:section|div)[^>]*id=["']${escaped}["'][\\s\\S]*?<\\/(?:section|div)>`,
+      "i",
+    );
+    const m = html.match(re);
+    if (!m) return false;
+    const block = m[0];
+    const hasButton = /<(button|a)\b/i.test(block);
+    const hasRowsOrPrices = /<(li|ul|ol)\b|price|total|offer|timer|countdown/i.test(block);
+    if (!hasButton || !hasRowsOrPrices) return false;
+  }
+  return true;
+}
 
 async function runGeneration(
   parsedData: z.infer<typeof generateSchema>,
@@ -167,6 +198,8 @@ Produce a section plan that maps the copy into funnel sections. **CRITICAL:** Yo
 
 **SECTION ↔ TEMPLATE BLOCK (MANDATORY):** For every section you output, mentally map its **type** to the **matching block** in the template scaffold (hero block → headline/hook; narrative → body block; reviews → testimonial block; Q&A → faq block; **prices, package, bonuses, shipping, urgency, main purchase → cta block** including any countdown/timer region). Do not assign pricing/offer/timer copy to **body**—use **cta** so the HTML generator can clone the template's pricing UI. One wrong type assignment breaks layout fidelity for that section.
 
+**SEMANTIC ROLE vs SURFACE LABEL (CRITICAL):** Classify copy by **what it does in the sales story**, not by whether its heading matches the template's example text. The template might show a stub title like "Pricing" or "Order now" in the scaffold—that is **layout chrome**, not a required string. If the user's paragraph opens with "How much does it cost?", "Investment", "Here's the deal", or similar, it is still the **pricing/offer block** → type **cta** and assign those paragraph indices to that section. Same for FAQs ("Questions", "Still unsure?", "Common concerns"), testimonials (names/stories even without a "Testimonials" heading), etc. **Never** choose **body** instead of **cta** just because the copy's heading wording differs from the template sample.
+
 Funnel name: ${parsedData.funnelName}
 Campaign context: ${parsedData.campaignContext ?? "N/A"}
 Template instructions: ${template?.instructions ?? "No template instructions provided"}
@@ -187,6 +220,8 @@ For each section output:
 **TESTIMONIALS - ONE SECTION PER REVIEWER (CRITICAL):** Each individual review/testimonial from a DIFFERENT person MUST be its own section with type "testimonial". Example: 5 reviews from Sarah, Mike, Lisa, John, Emma = 5 sections: testimonial-1, testimonial-2, testimonial-3, testimonial-4, testimonial-5. NEVER put multiple reviews in one section. Each testimonial section gets its own image slot.
 
 **PRICING / OFFER / PACKAGE COPY (CRITICAL):** If the template scaffold shows a designed pricing, offer, bonus stack, countdown, or "secure order" block (rows with prices, checkmarks, buttons, timers), and the user's copy includes prices, discounts, package contents, shipping, or the main purchase CTA, you MUST assign those paragraphs to section type **"cta"** (not "body"). Use **"body"** only for narrative paragraphs. Multiple pricing-related paragraphs can share one **cta** section if they belong to the same offer, or split if the template implies separate blocks. This ensures the HTML step reuses the template's pricing UI instead of plain paragraphs.
+
+**SECTION title FIELD:** Use \`title\` as a short **internal label** for the plan (e.g. "Offer / pricing", "FAQ block"). It does **not** need to match the advertorial's exact heading—the injected copy from the assigned paragraphs carries the real headline ("How much does it cost?", etc.). The HTML step will place that copy into the template's styled headline slot for that block type.
 
 Create enough sections so all ${paragraphs.length} paragraphs are assigned. Follow template structure.`,
   });
@@ -237,12 +272,14 @@ Create enough sections so all ${paragraphs.length} paragraphs are assigned. Foll
   });
 
   const mediaPlaceholders = parseMediaPlaceholders(parsedData.objective);
-  const productImageBase64 = productImagesRaw
-    .map((dataUrl) => {
-      const m = /^data:image\/[^;]+;base64,(.+)$/.exec(dataUrl);
-      return m ? m[1] : null;
-    })
-    .filter((x): x is string => Boolean(x))
+  /** Full data URLs — required for `generateImage` reference conditioning (see lib/generate-funnel-media.ts). */
+  const productImageDataUrls = productImagesRaw
+    .filter(
+      (u): u is string =>
+        typeof u === "string" &&
+        u.startsWith("data:image/") &&
+        u.includes(";base64,"),
+    )
     .slice(0, 3);
 
   type ImageCandidate = {
@@ -288,7 +325,7 @@ Create enough sections so all ${paragraphs.length} paragraphs are assigned. Foll
       }));
 
   const ctaCandidates: Omit<ImageCandidate, "isProductSection">[] =
-    productImageBase64.length > 0
+    productImageDataUrls.length > 0
       ? sectionPlan.sections
           .filter((s) => s.type === "cta" && s.id)
           .map((s) => ({
@@ -330,7 +367,7 @@ Create enough sections so all ${paragraphs.length} paragraphs are assigned. Foll
   const needsClassification = imageCandidatesBase.filter(
     (c) => c.type !== "testimonial" && c.type !== "cta",
   );
-  const classified = productImageBase64.length > 0
+  const classified = productImageDataUrls.length > 0
     ? await Promise.all(
         needsClassification.map((c) =>
           classifyIsProductSection(c.content, parsedData.objective, gateway("openai/gpt-4.1-mini")),
@@ -341,7 +378,7 @@ Create enough sections so all ${paragraphs.length} paragraphs are assigned. Foll
 
   const imageCandidates: ImageCandidate[] = imageCandidatesBase.map((c) => {
     if (c.type === "testimonial") return { ...c, isProductSection: true, useProductDirectly: false };
-    if (c.type === "cta" && productImageBase64.length > 0)
+    if (c.type === "cta" && productImageDataUrls.length > 0)
       return { ...c, isProductSection: true, useProductDirectly: true };
     return {
       ...c,
@@ -351,7 +388,7 @@ Create enough sections so all ${paragraphs.length} paragraphs are assigned. Foll
   });
 
   const defaultProductGuidelines =
-    productImageBase64.length > 0
+    productImageDataUrls.length > 0
       ? "CRITICAL: (1) Testimonials and ANY section showing a person with the product: MUST be a SELFIE—person taking the photo themselves, first-person POV, holding the product with a genuine smile. Match their gender exactly. (2) Images must depict ONLY the content above them—no generic or unrelated imagery. (3) Product intro/mechanism (no person): product clearly visible in frame. (4) Doctor/expert: show them holding or recommending the product. (5) Ultra-photorealistic—indistinguishable from real photography."
       : "";
 
@@ -470,7 +507,8 @@ IDs in order of appearance: ${placeholderIdList}
 4. COPY LENGTH: **Longer copy** → repeat the template's section pattern more times, or add paragraphs **inside** the same wrapper elements the template uses—never switch to a generic layout or blow up font sizes. **Shorter copy** → omit whole block types if needed; keep remaining blocks identical to the scaffold; do not enlarge type to "fill" the page.
 5. REQUIRED ATTRIBUTES (do not skip): On each section's root (\`<section>\` or outermost wrapper for that section), set \`id="<section id from plan>"\` and \`data-section-type="<type from plan>"\`. Add these on the same node that already carries the template's classes.
 6. VISUAL FIDELITY: The result should look like **the template file with the user's words dropped in**—same columns, widths, spacing rhythm, and **type scale** as the template. Only the text changes; not the layout system.
-7. DO NOT STRIP: Never remove decorative shells from the scaffold (bands, borders, icon placeholders, **timer/countdown wrappers**, grid columns, CTA button elements) to "simplify"—those create the design.
+7. HEADLINES / LABELS: The scaffold may contain placeholder headings (e.g. "Pricing", "Testimonials"). **Replace those strings with the user's actual copy** for that section—including when the advertorial uses different wording (e.g. "How much does it cost?" instead of "Pricing"). Preserve the **same HTML tag and classes** as the template's title strip; only swap the text node content. Do not keep the scaffold's sample headline when the plan's copy provides a different one.
+8. DO NOT STRIP: Never remove decorative shells from the scaffold (bands, borders, icon placeholders, **timer/countdown wrappers**, grid columns, CTA button elements) to "simplify"—those create the design.
 `
     : "";
 
@@ -480,7 +518,7 @@ IDs in order of appearance: ${placeholderIdList}
 For every section with type **"cta"** (and any section whose content is mainly prices, package items, bonuses, shipping, savings, countdown/urgency, or the primary purchase action):
 
 1. **Find** the template scaffold's **offer / pricing / package / bonus** block—the one with structured rows (often checkmarks, strikethrough "regular" prices, highlighted totals, optional countdown/timer, large **KOSTENLOS/FREE** or total line, and a prominent **button** or CTA link.
-2. **Clone that block's full markup tree**—every wrapper \`<div>\`/ \`<section>\`, **all class names**, nested grids, \`<ul>\`/\`<li>\` or row \`<div>\`s, price spans, **timer/countdown container** (all nested elements the template uses for digits or labels), icon slots, and the **\`<button>\` or anchor CTA**. Put the plan's text into the **same element roles** the template uses (headline strip, each line item, fine print, button label). Do **not** flatten offer copy into unstructured \`<p>\` tags only.
+2. **Clone that block's full markup tree**—every wrapper \`<div>\`/ \`<section>\`, **all class names**, nested grids, \`<ul>\`/\`<li>\` or row \`<div>\`s, price spans, **timer/countdown container** (all nested elements the template uses for digits or labels), icon slots, and the **\`<button>\` or anchor CTA**. Put the plan's text into the **same element roles** the template uses (headline strip, each line item, fine print, button label). The offer **headline** may be the user's wording (e.g. "How much does it cost?")—use that text in the template's title/headline nodes, not the scaffold's sample label like "Pricing". Do **not** flatten offer copy into unstructured \`<p>\` tags only.
 3. **COUNTDOWN / TIMER:** If the scaffold includes a timer region (any combination of \`<span>\`, \`<div>\`, \`data-*\` hooks, or classes for clock digits), **preserve that entire subtree** and its classes so CSS/layout matches the template. You may use placeholder digits (e.g. 00:50:03) or static text inside the same structure—**do not delete** the timer shell to save space. Real live countdown behavior may rely on the template's existing scripts; your job is the **visible structure** matching 100%.
 4. **Forbidden:** Outputting a \`<section id="…" data-section-type="cta">\` that contains only consecutive \`<p>\` paragraphs when the template shows a designed pricing UI. **Forbidden:** Omitting the template's button, list rows, or **timer** wrapper for offer content. **Forbidden:** Using a single generic article layout for pricing when the scaffold shows a distinct block.
 5. If the plan's copy has many short lines (items, bullets), map them into the template's **repeating row** pattern (duplicate \`<li>\` or row divs) instead of joining everything into one paragraph.
@@ -587,7 +625,7 @@ ${templateHtmlScaffold}
     }
     const useProductImage =
       (section.isProductSection || section.type === "testimonial") &&
-      productImageBase64.length > 0 &&
+      productImageDataUrls.length > 0 &&
       !section.preferGif;
     emit({
       type: "reasoning",
@@ -621,7 +659,7 @@ ${templateHtmlScaffold}
         imageModel,
         videoModel,
         sectionId: section.id,
-        productImageBase64: useProductImage ? productImageBase64 : undefined,
+        productImageDataUrls: useProductImage ? productImageDataUrls : undefined,
         onVideoFallback: (sid, err) => {
           const msg = err instanceof Error ? err.message : String(err);
           emit({
@@ -767,6 +805,64 @@ ${batchJson}`;
       maxOutputTokens: HTML_MAX_TOKENS,
     });
     htmlRaw = htmlResult.object.html;
+  }
+
+  if (hasTemplate && templateHtmlScaffold !== "N/A") {
+    const templateClasses = extractClassNames(templateHtmlScaffold);
+    const generatedClasses = extractClassNames(htmlRaw);
+    const sharedCount = [...generatedClasses].filter((c) => templateClasses.has(c)).length;
+    const overlapRatio =
+      generatedClasses.size > 0 ? sharedCount / generatedClasses.size : 1;
+    const ctaLooksStructured = hasStructuredCtaBlock(htmlRaw, ctaSectionIds);
+    const needsTemplateRepair = overlapRatio < 0.45 || !ctaLooksStructured;
+
+    if (needsTemplateRepair) {
+      emit({
+        type: "warning",
+        message:
+          "Template fidelity drift detected (section structure/classes). Running strict template repair pass.",
+        payload: {
+          overlapRatio: Number(overlapRatio.toFixed(3)),
+          ctaLooksStructured,
+        },
+      });
+
+      const repairPrompt = `${copyContext}
+
+You must REWRITE the draft HTML so it strictly matches the selected template section-by-section.
+
+Rules (non-negotiable):
+- Keep all section ids and data-section-type values from the section plan.
+- For each section type, clone the matching subtree from the template scaffold (same tags/classes/depth).
+- CTA/pricing sections must keep full pricing UI shell (rows, totals, timer/countdown wrappers, CTA button).
+- Do not flatten designed blocks into plain paragraphs.
+- Keep all {{image:...}} placeholders and any existing img tags.
+- Preserve exact copy text.
+
+Section Plan:
+${sectionPlanJson}
+
+Template scaffold:
+\`\`\`html
+${templateHtmlScaffold}
+\`\`\`
+
+Current draft HTML to repair:
+\`\`\`html
+${htmlRaw}
+\`\`\`
+
+Output only repaired HTML fragment (no markdown fences).`;
+
+      const repairResult = await generateObject({
+        model: gateway("openai/gpt-4.1"),
+        schema: htmlOnlySchema,
+        system: htmlGenerationSystem,
+        prompt: repairPrompt,
+        maxOutputTokens: HTML_MAX_TOKENS,
+      });
+      htmlRaw = (repairResult.object.html ?? htmlRaw).trim();
+    }
   }
 
   let html = mediaPlaceholders.length > 0
@@ -928,9 +1024,109 @@ blockquote.content-quote { margin: 0.85em 0; padding-left: 1em; border-left: 3px
   emit({ type: "html-stream", payload: { value: html } });
   emit({ type: "css-stream", payload: { value: css } });
 
+  const placeholderIdsInHtml = extractImagePlaceholderIdsFromHtml(html);
+  const candidateById = new Map(imageCandidates.map((c) => [c.id, c]));
+  const missingIds = placeholderIdsInHtml.filter((id) => !candidateById.has(id));
+  if (missingIds.length > 0) {
+    emit({
+      type: "status",
+      message: `Found ${placeholderIdsInHtml.length} image slot(s) in HTML; adding ${missingIds.length} missing from the initial plan (template/extra placeholders).`,
+    });
+    const extraMeta = await Promise.all(
+      missingIds.map(async (id) => {
+        const section = sectionPlan.sections.find((s) => s.id === id);
+        if (!section) {
+          return {
+            id,
+            section: null as (typeof sectionPlan.sections)[number] | null,
+            isProductSection: false,
+            useProductDirectly: false,
+          };
+        }
+        if (section.type === "testimonial") {
+          return {
+            id,
+            section,
+            isProductSection: true,
+            useProductDirectly: false,
+          };
+        }
+        if (section.type === "cta" && productImageDataUrls.length > 0) {
+          return {
+            id,
+            section,
+            isProductSection: true,
+            useProductDirectly: true,
+          };
+        }
+        if (classifyMap.has(section.id)) {
+          return {
+            id,
+            section,
+            isProductSection: classifyMap.get(section.id) ?? false,
+            useProductDirectly: false,
+          };
+        }
+        if (section.type === "faq") {
+          return {
+            id,
+            section,
+            isProductSection: false,
+            useProductDirectly: false,
+          };
+        }
+        const isProductSection = await classifyIsProductSection(
+          section.content,
+          parsedData.objective,
+          gateway("openai/gpt-4.1-mini"),
+        );
+        return {
+          id,
+          section,
+          isProductSection,
+          useProductDirectly: false,
+        };
+      }),
+    );
+    for (const meta of extraMeta) {
+      if (!meta.section) {
+        candidateById.set(meta.id, {
+          id: meta.id,
+          title: "Image",
+          content:
+            "Create a photorealistic image that fits this marketing funnel section and adjacent copy.",
+          type: "body",
+          imagePrompt: null,
+          preferGif: false,
+          isProductSection: false,
+          useProductDirectly: false,
+        });
+        continue;
+      }
+      const s = meta.section;
+      const plain = (s.content ?? "")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 1200);
+      candidateById.set(meta.id, {
+        id: s.id,
+        title: s.title,
+        content: `[Section visual—use ONLY this context]:\n\n${plain}`,
+        type: s.type,
+        imagePrompt: s.imagePrompt,
+        preferGif: s.preferGif ?? false,
+        isProductSection: meta.isProductSection,
+        useProductDirectly: meta.useProductDirectly,
+      });
+    }
+  }
+
+  const finalImageCandidates = Array.from(candidateById.values());
+
   emit({ type: "status", message: "Generating images..." });
   const imageResults = await runWithConcurrencyLimit(
-    imageCandidates,
+    finalImageCandidates,
     IMAGE_CONCURRENCY,
     generateImageForSection,
   );
@@ -944,8 +1140,30 @@ blockquote.content-quote { margin: 0.85em 0; padding-left: 1em; border-left: 3px
     type: "status",
     message: "Uploading images and saving funnel.",
   });
+  if (!getSupabaseServiceRoleKey()) {
+    console.warn(
+      "[copy-injection/generate] SUPABASE_SERVICE_ROLE_KEY is not set. Storage uploads usually fail without it; add it to .env.local and restart the dev server.",
+    );
+  }
   const storageClient = createSupabaseAdminClient() ?? supabase;
   const imagesForDb = await uploadImagesMapToStorage(generatedImages, storageClient);
+
+  const storedInline =
+    Object.values(imagesForDb).some(
+      (v) => typeof v === "string" && v.startsWith("data:"),
+    );
+  if (storedInline) {
+    emit({
+      type: "warning",
+      message:
+        "Some images were saved inline (data URLs) because Storage upload failed or was skipped. Set SUPABASE_SERVICE_ROLE_KEY and use bucket \"funnel-images\" for public URLs in the bucket. Preview should still work.",
+    });
+  }
+
+  const imagesForClient: Record<string, string> = {};
+  for (const [sectionId, dataUrl] of Object.entries(generatedImages)) {
+    imagesForClient[sectionId] = imagesForDb[sectionId] ?? dataUrl;
+  }
 
   const { data: funnel, error: funnelError } = await supabase
     .from("funnels")
@@ -982,11 +1200,11 @@ blockquote.content-quote { margin: 0.85em 0; padding-left: 1em; border-left: 3px
   }
 
   return {
-    funnel: { ...funnel, latest_images: imagesForDb },
+    funnel: { ...funnel, latest_images: imagesForClient },
     generated: {
       html,
       css,
-      images: imagesForDb,
+      images: imagesForClient,
       sectionPlan,
     },
   };

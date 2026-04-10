@@ -16,8 +16,8 @@ export interface GenerateFunnelMediaOptions {
   sectionId?: string;
   /** Called when video generation was attempted but failed (we fall back to image). */
   onVideoFallback?: (sectionId: string, err: unknown) => void;
-  /** Optional product reference images (base64) for product sections. Applied only for static images, not GIF/video. */
-  productImageBase64?: string[];
+  /** Optional product reference images as full data URLs (`data:image/...;base64,...`). Applied only for static images, not GIF/video. */
+  productImageDataUrls?: string[];
   /** Scene type for product sections—adds targeted style hints (before_after, doctor_recommendation, etc.). */
   sceneType?: string;
 }
@@ -37,14 +37,14 @@ export async function generateFunnelMedia(
     videoModel,
     sectionId = "",
     onVideoFallback,
-    productImageBase64,
+    productImageDataUrls,
     sceneType,
   } = options;
   const imagePrompt = buildImageModelPrompt(prompt, preferGif, sceneType);
 
   // Product reference only for static images (video/GIF models may not support it)
   const useProductReference =
-    Boolean(productImageBase64 && productImageBase64.length > 0) && !preferGif;
+    Boolean(productImageDataUrls && productImageDataUrls.length > 0) && !preferGif;
 
   if (preferGif && videoModel) {
     try {
@@ -71,22 +71,20 @@ export async function generateFunnelMedia(
   }
 
   let imageResult;
-  if (useProductReference && productImageBase64 && productImageBase64.length > 0) {
+  if (useProductReference && productImageDataUrls && productImageDataUrls.length > 0) {
     try {
-      const refs = productImageBase64.slice(0, 3);
-      const referenceParts = refs.map((b64) => ({ type: "image" as const, image: b64 }));
+      const refs = productImageDataUrls.slice(0, 3);
       const conditioningText = `${imagePrompt}
 
 CRITICAL PRODUCT MATCHING: The user uploaded a reference product image. The product shown in the generated image MUST match the reference product EXACTLY: same packaging shape, label layout, colors, branding marks, cap/nozzle type, proportions, and material finish. Do NOT create a lookalike or alternate packaging. Do NOT change the label. Keep the product identical even when held in a person's hand or in a selfie.`;
 
+      // AI SDK expects `{ images, text }` for reference conditioning (same as lib/ad-image-generate.ts).
       imageResult = await generateImage({
         model: imageModel,
-        // Multimodal prompt: provide the reference product image(s) plus text instructions.
-        // Some SDK typings may not expose this yet; runtime supports it.
-        prompt: [
-          ...referenceParts,
-          { type: "text" as const, text: conditioningText },
-        ] as unknown as any,
+        prompt: {
+          images: refs,
+          text: conditioningText,
+        },
         aspectRatio: "16:9",
       });
     } catch (err) {

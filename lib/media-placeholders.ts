@@ -17,6 +17,25 @@ const PARSE_REGEX = /\[\s*image\s*\]|\[\s*gif\s*\]/gi;
  * Returns placeholders in order of appearance in the copy.
  * IDs are assigned as image-1, image-2, ..., gif-1, gif-2, ...
  */
+/**
+ * Every `{{image:sectionId}}` in final funnel HTML must have a matching entry in `latest_images`.
+ * Call this after HTML is finalized to discover all slots (including template/scaffold extras).
+ */
+export function extractImagePlaceholderIdsFromHtml(html: string): string[] {
+  const re = /\{\{image:([^}]+)\}\}/g;
+  const seen = new Set<string>();
+  const out: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) !== null) {
+    const id = String(m[1]).trim();
+    if (id && !seen.has(id)) {
+      seen.add(id);
+      out.push(id);
+    }
+  }
+  return out;
+}
+
 export function parseMediaPlaceholders(objective: string): MediaPlaceholder[] {
   const out: MediaPlaceholder[] = [];
   let imageCount = 0;

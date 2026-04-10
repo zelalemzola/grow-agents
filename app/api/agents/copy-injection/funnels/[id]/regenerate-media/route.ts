@@ -167,12 +167,9 @@ export async function POST(request: Request, { params }: Params) {
     sectionForVisual.isProductSection =
       isProductSection || section.type === "testimonial";
 
-    let productImageBase64: string[] | undefined;
-    if (parsed.data.productImage) {
-      const m = /^data:image\/[^;]+;base64,(.+)$/.exec(parsed.data.productImage);
-      if (m) {
-        productImageBase64 = [m[1]];
-      }
+    let productImageDataUrls: string[] | undefined;
+    if (parsed.data.productImage?.startsWith("data:image/")) {
+      productImageDataUrls = [parsed.data.productImage];
     }
 
     const { description: visualDescription, sceneType } =
@@ -200,7 +197,7 @@ export async function POST(request: Request, { params }: Params) {
       imageModel,
       videoModel,
       sectionId: parsed.data.sectionId,
-      productImageBase64,
+      productImageDataUrls,
       onVideoFallback: (sid, err) => {
         console.warn(
           `[regenerate-media] Video fallback for ${sid}:`,
